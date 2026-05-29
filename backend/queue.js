@@ -84,7 +84,12 @@ class QueueWorker extends EventEmitter {
       const data = await response.json();
       console.log("Bulkvs API response:", JSON.stringify(data));
 
-      if (response.ok && data.Results && data.Results[0] && data.Results[0].Status === 'SUCCESS') {
+      const isSuccess = response.ok && (
+        (data.Results && data.Results[0] && data.Results[0].Status === 'SUCCESS') ||
+        (data.RefId && !data.error && !data.message)
+      );
+
+      if (isSuccess) {
         const refId = data.RefId || '';
         db.updateMessageStatus(msg.id, 'sent', refId);
         this.emit('messageStatusChanged', { 
