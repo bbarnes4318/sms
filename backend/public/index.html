@@ -71,6 +71,9 @@
         <form id="chat-form" class="chat-composer">
           <div class="composer-inputs">
             <textarea id="message-input" placeholder="Type a message..." rows="1" required></textarea>
+            <div class="composer-meta-row">
+              <div class="char-counter" id="chat-char-counter">0 / 160 (1 segment)</div>
+            </div>
             <div class="mms-input-row" id="mms-input-row">
               <span class="attachment-icon">📎</span>
               <input type="text" id="media-url-input" placeholder="Optional Media URL (JPEG/PNG for MMS)">
@@ -201,7 +204,10 @@
         <div class="form-group" style="margin-top: 16px;">
           <label for="template-message">Optional Message Template</label>
           <textarea id="template-message" placeholder="e.g. Hello [Name], this is Jimmy from Life Assurance. I have exciting news!" rows="3"></textarea>
-          <small class="form-help">Use <strong>[Name]</strong> to dynamically insert the lead's name.</small>
+          <div class="template-meta-row">
+            <div class="char-counter" id="template-char-counter">0 / 160 (1 segment)</div>
+            <small class="form-help">Use <strong>[Name]</strong> to dynamically insert the lead's name.</small>
+          </div>
         </div>
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-upload" disabled>Import & Queue</button>

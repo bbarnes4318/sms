@@ -59,6 +59,10 @@ const previewCount = document.getElementById('preview-count');
 const templateMessage = document.getElementById('template-message');
 const btnSubmitUpload = document.getElementById('btn-submit-upload');
 
+// Phase 3: Character Counter DOM Elements
+const chatCharCounter = document.getElementById('chat-char-counter');
+const templateCharCounter = document.getElementById('template-char-counter');
+
 // 1. Initial Load & Setup
 window.addEventListener('DOMContentLoaded', () => {
   loadConversations();
@@ -98,10 +102,16 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Textarea auto-resize
+  // Textarea auto-resize & character count
   messageInput.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight - 6) + 'px';
+    updateCharCounter(this, chatCharCounter);
+  });
+
+  // Template message character count
+  templateMessage.addEventListener('input', function() {
+    updateCharCounter(this, templateCharCounter);
   });
 
   // Phase 2: Lead Upload Modal Event Listeners
@@ -371,6 +381,7 @@ async function selectConversation(conv) {
   
   // Show input field
   chatComposerContainer.style.display = 'block';
+  updateCharCounter(messageInput, chatCharCounter);
   
   // Load messages
   messagesFeed.innerHTML = `<div class="feed-placeholder">Loading message history...</div>`;
@@ -484,6 +495,7 @@ async function handleSendMessage(e) {
       messageInput.value = '';
       messageInput.style.height = 'auto';
       mediaUrlInput.value = '';
+      updateCharCounter(messageInput, chatCharCounter);
     } else {
       const err = await res.json();
       alert("Error queueing message: " + err.error);
@@ -586,6 +598,7 @@ function resetLeadUploadState() {
   uploadPreview.style.display = 'none';
   previewCount.textContent = '0';
   templateMessage.value = '';
+  updateCharCounter(templateMessage, templateCharCounter);
   btnSubmitUpload.disabled = true;
   btnSubmitUpload.textContent = 'Import & Queue';
 }
@@ -737,5 +750,62 @@ async function handleUploadLeadsSubmit(e) {
     alert("Connection error uploading leads.");
     btnSubmitUpload.disabled = false;
     btnSubmitUpload.textContent = `Import & Queue ${parsedLeads.length} Leads`;
+  }
+}
+
+// Phase 3: Character Counter & Segment Estimation Logic
+function getSmsDetails(text) {
+  if (!text) {
+    return { count: 0, limit: 160, segments: 1, isUnicode: false };
+  }
+  
+  // Check for non-GSM-7 characters
+  const gsm7Regex = /^[\n\r a-zA-Z0-9@£$¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\[~\]|€\\]*$/;
+  const isUnicode = !gsm7Regex.test(text);
+  
+  const count = text.length;
+  let limit = 160;
+  let segments = 1;
+  
+  if (isUnicode) {
+    limit = 70;
+    if (count > 70) {
+      segments = Math.ceil(count / 67);
+      limit = segments * 67;
+    }
+  } else {
+    // Extended GSM-7 characters count as double
+    const extendedRegex = /[\^{}\[~\]|€\\]/g;
+    const extendedCount = (text.match(extendedRegex) || []).length;
+    const totalCount = count + extendedCount;
+    
+    limit = 160;
+    if (totalCount > 160) {
+      segments = Math.ceil(totalCount / 153);
+      limit = segments * 153;
+    }
+    return { count: totalCount, limit, segments, isUnicode };
+  }
+  
+  return { count, limit, segments, isUnicode };
+}
+
+function updateCharCounter(textarea, counterEl) {
+  const text = textarea.value;
+  const details = getSmsDetails(text);
+  
+  let label = `${details.count} / ${details.limit} (${details.segments} segment${details.segments > 1 ? 's' : ''})`;
+  if (details.isUnicode) {
+    label += ' • Unicode';
+  }
+  
+  counterEl.textContent = label;
+  
+  // Styles based on segments
+  counterEl.className = 'char-counter';
+  if (details.segments === 2) {
+    counterEl.classList.add('warning');
+  } else if (details.segments >= 3) {
+    counterEl.classList.add('danger');
   }
 }
