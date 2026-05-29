@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SMS Gateway Dashboard</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Left Sidebar: Conversations -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">💬</div>
+          <h1>SMS Gateway</h1>
+        </div>
+        <button id="btn-new-chat" class="btn-primary" title="Start New Conversation">
+          <span class="btn-icon">+</span> New Chat
+        </button>
+      </div>
+      
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Search conversations...">
+      </div>
+      
+      <div class="conversations-list" id="conversations-list">
+        <!-- Dynamic conversations will be inserted here -->
+        <div class="list-placeholder">Loading conversations...</div>
+      </div>
+    </aside>
+    
+    <!-- Main Content: Active Chat -->
+    <main class="chat-area">
+      <header class="chat-header" id="chat-header">
+        <div class="active-contact-info">
+          <div class="avatar" id="active-avatar">#</div>
+          <div>
+            <h2 id="active-contact-name">Select a conversation</h2>
+            <p id="active-contact-phone" class="subtext">Select or start a chat to send messages</p>
+          </div>
+        </div>
+        <div class="chat-actions">
+          <span class="status-indicator online" id="ws-status">WS Connecting</span>
+        </div>
+      </header>
+      
+      <section class="messages-feed" id="messages-feed">
+        <div class="feed-placeholder">
+          <div class="welcome-box">
+            <div class="welcome-icon">⚡</div>
+            <h3>Welcome to Bulkvs SMS Gateway</h3>
+            <p>Select a contact from the sidebar or click "New Chat" to begin sending rate-limited messages securely.</p>
+          </div>
+        </div>
+      </section>
+      
+      <footer class="chat-composer-container" id="chat-composer-container" style="display: none;">
+        <form id="chat-form" class="chat-composer">
+          <div class="composer-inputs">
+            <textarea id="message-input" placeholder="Type a message..." rows="1" required></textarea>
+            <div class="mms-input-row" id="mms-input-row">
+              <span class="attachment-icon">📎</span>
+              <input type="text" id="media-url-input" placeholder="Optional Media URL (JPEG/PNG for MMS)">
+            </div>
+          </div>
+          <button type="submit" class="btn-send" id="btn-send">
+            <svg viewBox="0 0 24 24" width="20" height="20" class="send-icon">
+              <path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+            </svg>
+          </button>
+        </form>
+      </footer>
+    </main>
+    
+    <!-- Right Panel: Queue & Settings -->
+    <section class="dashboard-panel">
+      <!-- Queue Stats -->
+      <div class="panel-section">
+        <h3>Queue Monitoring</h3>
+        <div class="stats-grid">
+          <div class="stat-card card-queued">
+            <div class="stat-value" id="stat-queued">0</div>
+            <div class="stat-label">Queued</div>
+          </div>
+          <div class="stat-card card-sending">
+            <div class="stat-value animate-pulse" id="stat-sending">0</div>
+            <div class="stat-label">Sending</div>
+          </div>
+          <div class="stat-card card-sent">
+            <div class="stat-value" id="stat-sent">0</div>
+            <div class="stat-label">Sent</div>
+          </div>
+          <div class="stat-card card-failed">
+            <div class="stat-value" id="stat-failed">0</div>
+            <div class="stat-label">Failed</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- System Settings -->
+      <div class="panel-section">
+        <h3>Gateway Settings</h3>
+        <form id="settings-form" class="settings-form">
+          <div class="form-group">
+            <label for="setting-sender">Toll-Free Sender Number</label>
+            <input type="text" id="setting-sender" value="+18887885527" required>
+            <small class="form-help">Approved toll-free sender number.</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="setting-interval">Send Rate Limit Interval (ms)</label>
+            <div class="range-container">
+              <input type="range" id="setting-interval" min="500" max="10000" step="500" value="2000">
+              <span class="range-val" id="setting-interval-val">2000 ms</span>
+            </div>
+            <small class="form-help">Controls pacing. Carrier recommended: >= 2000ms.</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="setting-username">Bulkvs Username</label>
+            <input type="text" id="setting-username" required>
+          </div>
+          
+          <div class="form-group">
+            <label for="setting-token">Bulkvs API Password/Token</label>
+            <input type="password" id="setting-token" required>
+          </div>
+          
+          <button type="submit" class="btn-secondary">Save Configuration</button>
+          <div class="settings-status" id="settings-status"></div>
+        </form>
+      </div>
+
+      <!-- Inbound Webhook Instructions -->
+      <div class="panel-section webhook-info-card">
+        <h3>Inbound Webhook Config</h3>
+        <p class="webhook-desc">To receive replies, add this URL as a <strong>POST</strong> webhook in your Bulkvs Portal under <em>Messaging -> Message Webhook</em>:</p>
+        <div class="webhook-url-box">
+          <code id="webhook-url-display">http://[server_ip]/webhook/inbound</code>
+          <button id="btn-copy-webhook" class="btn-copy" title="Copy URL">📋</button>
+        </div>
+      </div>
+    </section>
+    
+  </div>
+
+  <!-- Start Chat Modal -->
+  <div class="modal" id="new-chat-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Start New Chat</h2>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <form id="new-chat-form">
+        <div class="form-group">
+          <label for="new-phone">Recipient Phone Number</label>
+          <input type="tel" id="new-phone" placeholder="e.g. 18885551234 or +18885551234" required>
+          <small class="form-help">Include country code (e.g. 1 for US).</small>
+        </div>
+        <div class="form-group">
+          <label for="new-name">Contact Name (Optional)</label>
+          <input type="text" id="new-name" placeholder="e.g. John Doe">
+        </div>
+        <button type="submit" class="btn-primary btn-block">Open Chat</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main JavaScript -->
+  <script src="app.js"></script>
+</body>
+</html>

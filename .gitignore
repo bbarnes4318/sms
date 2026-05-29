@@ -1,0 +1,12 @@
+.env
+id_ed25519
+server_ip.txt
+node_modules/
+dist/
+.idea/
+.vscode/
+*.log
+database.sqlite
+package-lock.json
+*.pyc
+__pycache__/

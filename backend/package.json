@@ -1,0 +1,16 @@
+{
+  "name": "sms-gateway-backend",
+  "version": "1.0.0",
+  "description": "SMS Gateway Backend for Bulkvs and SQLite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}
