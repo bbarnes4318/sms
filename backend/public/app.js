@@ -95,10 +95,15 @@ window.addEventListener('DOMContentLoaded', () => {
   settingsForm.addEventListener('submit', handleSaveSettings);
 
   // Copy webhook URL
+  const originalCopySvg = btnCopyWebhook.innerHTML;
   btnCopyWebhook.addEventListener('click', () => {
     navigator.clipboard.writeText(webhookUrlDisplay.textContent).then(() => {
-      btnCopyWebhook.textContent = '✅';
-      setTimeout(() => btnCopyWebhook.textContent = '📋', 2000);
+      btnCopyWebhook.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="hsl(145, 65%, 48%)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      btnCopyWebhook.classList.add('copied');
+      setTimeout(() => {
+        btnCopyWebhook.innerHTML = originalCopySvg;
+        btnCopyWebhook.classList.remove('copied');
+      }, 2000);
     });
   });
 

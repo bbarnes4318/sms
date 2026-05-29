@@ -23,10 +23,13 @@ cd /root/sms-app
 npm install --production
 
 echo "=== Configuring Nginx ==="
-cat << 'EOF' > /etc/nginx/sites-available/sms-gateway
+if [ -f /etc/nginx/sites-available/sms-gateway ] && grep -q "listen 443" /etc/nginx/sites-available/sms-gateway; then
+    echo "Nginx already configured with SSL. Skipping overwrite."
+else
+    cat << 'EOF' > /etc/nginx/sites-available/sms-gateway
 server {
     listen 80;
-    server_name _;
+    server_name sms.leadzer.io;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -40,6 +43,7 @@ server {
     }
 }
 EOF
+fi
 
 ln -sf /etc/nginx/sites-available/sms-gateway /etc/nginx/sites-enabled/default
 systemctl restart nginx
