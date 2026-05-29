@@ -21,7 +21,7 @@ def make_tarfile(output_filename, source_dir):
                     continue
                 
                 full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, start=os.path.join(source_dir, '..'))
+                rel_path = os.path.relpath(full_path, start=source_dir)
                 tar.add(full_path, arcname=rel_path)
     print("Tarball created successfully.")
 
