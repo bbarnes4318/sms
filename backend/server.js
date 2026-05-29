@@ -204,12 +204,44 @@ app.post('/webhook/inbound', (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   console.log(`Inbound webhook received from IP ${ip}:`, JSON.stringify(req.body));
   
-  const { From, To, Message, MediaURLs } = req.body;
+  const { From, To, Message, MediaURLs, DeliveryReceipt, RefId } = req.body;
   if (!From) {
     return res.status(400).send('Missing From field');
   }
 
   try {
+    // Handle Bulkvs Delivery Receipts (DLR)
+    if (DeliveryReceipt === true || DeliveryReceipt === 'true') {
+      console.log(`Handling delivery receipt for RefId: ${RefId}`);
+      
+      const decodedMsg = decodeURIComponent(Message || '');
+      const statMatch = decodedMsg.match(/stat:([A-Z]+)/);
+      const errMatch = decodedMsg.match(/err:(\d+)/);
+      
+      const status = statMatch ? statMatch[1] : '';
+      const errCode = errMatch ? errMatch[1] : '';
+
+      // Find original message by RefId
+      const targetMsg = db.db.prepare('SELECT * FROM messages WHERE ref_id = ?').get(RefId);
+      if (targetMsg) {
+        if (status === 'DELIVRD') {
+          console.log(`Outbound message ${targetMsg.id} delivered.`);
+        } else if (status === 'UNDELIV' || status === 'REJECTD' || status === 'EXPIRED') {
+          const errorDetail = `Carrier delivery failed: ${status} (err: ${errCode || 'unknown'})`;
+          db.updateMessageStatus(targetMsg.id, 'failed', RefId, errorDetail);
+          
+          broadcast('message_status', {
+            id: targetMsg.id,
+            status: 'failed',
+            error_message: errorDetail,
+            conversation_id: targetMsg.conversation_id
+          });
+          broadcast('queue_status', db.getQueueStats());
+        }
+      }
+      return res.status(200).send('OK');
+    }
+
     // Get target number
     const toNum = (To && To[0]) || '';
     
