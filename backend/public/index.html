@@ -21,9 +21,14 @@
           <div class="logo-icon">💬</div>
           <h1>SMS Gateway</h1>
         </div>
-        <button id="btn-new-chat" class="btn-primary" title="Start New Conversation">
-          <span class="btn-icon">+</span> New Chat
-        </button>
+        <div class="sidebar-actions">
+          <button id="btn-new-chat" class="btn-primary" title="Start New Conversation">
+            <span class="btn-icon">+</span> Chat
+          </button>
+          <button id="btn-upload-leads" class="btn-primary btn-accent" title="Bulk Upload Leads">
+            <span class="btn-icon">📁</span> Upload
+          </button>
+        </div>
       </div>
       
       <div class="search-box">
@@ -170,6 +175,36 @@
           <input type="text" id="new-name" placeholder="e.g. John Doe">
         </div>
         <button type="submit" class="btn-primary btn-block">Open Chat</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Upload Leads Modal -->
+  <div class="modal" id="upload-leads-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Upload Leads (CSV)</h2>
+        <button class="modal-close" id="upload-close">&times;</button>
+      </div>
+      <form id="upload-leads-form">
+        <div class="file-drop-zone" id="csv-drop-zone">
+          <div class="drop-zone-icon">📥</div>
+          <p>Drag & drop your CSV file here, or <span class="browse-link" id="browse-trigger">browse</span></p>
+          <input type="file" id="csv-file-input" accept=".csv" style="display: none;">
+          <div class="selected-file-info" id="selected-file-info" style="display: none;"></div>
+        </div>
+        
+        <div class="upload-preview" id="upload-preview" style="display: none;">
+          <p class="preview-stats"><strong id="preview-count">0</strong> leads parsed successfully.</p>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="template-message">Optional Message Template</label>
+          <textarea id="template-message" placeholder="e.g. Hello [Name], this is Jimmy from Life Assurance. I have exciting news!" rows="3"></textarea>
+          <small class="form-help">Use <strong>[Name]</strong> to dynamically insert the lead's name.</small>
+        </div>
+
+        <button type="submit" class="btn-primary btn-block" id="btn-submit-upload" disabled>Import & Queue</button>
       </form>
     </div>
   </div>

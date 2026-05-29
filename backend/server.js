@@ -137,6 +137,38 @@ app.post('/api/conversations/:id/messages', (req, res) => {
   }
 });
 
+// 4.5. Bulk Upload Leads & Campaign Sending
+app.post('/api/leads/upload', (req, res) => {
+  const { leads, message_template } = req.body;
+  if (!leads || !Array.isArray(leads)) {
+    return res.status(400).json({ error: 'Leads array is required' });
+  }
+
+  try {
+    const result = db.bulkImportLeads(leads, message_template || null);
+    
+    // Broadcast new messages via WebSockets if any
+    if (result.messages.length > 0) {
+      result.messages.forEach(msg => {
+        broadcast('message_new', msg);
+      });
+      // Wake up queue worker
+      queueWorker.processNext();
+    }
+    
+    // Update queue stats on dashboard
+    broadcast('queue_status', db.getQueueStats());
+
+    res.json({
+      success: true,
+      imported_count: result.conversations.length,
+      queued_count: result.messages.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 5. Get current settings
 app.get('/api/settings', (req, res) => {
   try {

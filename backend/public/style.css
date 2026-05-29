@@ -892,3 +892,80 @@ body {
   width: 100%;
   margin-top: 10px;
 }
+
+/* Phase 2: Lead Upload UI */
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.btn-accent {
+  background: linear-gradient(135deg, hsl(190, 85%, 50%), hsl(165, 80%, 45%));
+  box-shadow: 0 4px 15px var(--accent-glow);
+}
+
+.btn-accent:hover {
+  box-shadow: 0 6px 20px var(--accent-glow);
+}
+
+.file-drop-zone {
+  border: 2px dashed var(--border-color);
+  border-radius: 12px;
+  padding: 30px 20px;
+  text-align: center;
+  background: rgba(13, 17, 23, 0.2);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.file-drop-zone:hover, .file-drop-zone.dragover {
+  border-color: var(--accent);
+  background: rgba(190, 90, 50, 0.05);
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+.drop-zone-icon {
+  font-size: 36px;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+  100% { transform: translateY(0px); }
+}
+
+.browse-link {
+  color: var(--accent);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.selected-file-info {
+  font-size: 13px;
+  color: var(--success);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.upload-preview {
+  padding: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.preview-stats {
+  font-size: 13px;
+  color: var(--text-main);
+  text-align: center;
+}
+

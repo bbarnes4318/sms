@@ -208,6 +208,58 @@ function getQueueStats() {
   };
 }
 
+function bulkImportLeads(leads, messageTemplate) {
+  const settings = getSettings();
+  const fromNum = settings.sender_number || '+18887885527';
+  
+  const insertMessageStmt = db.prepare(`
+    INSERT INTO messages (
+      conversation_id, direction, from_number, to_number, body, status
+    ) VALUES (?, 'outbound', ?, ?, ?, 'queued')
+  `);
+  
+  const updateConvStmt = db.prepare(`
+    UPDATE conversations 
+    SET last_message_text = ?, last_message_at = datetime('now', 'localtime') 
+    WHERE id = ?
+  `);
+
+  const insertedMessages = [];
+  const insertedConvs = [];
+
+  const transaction = db.transaction((leadsList) => {
+    for (const lead of leadsList) {
+      if (!lead.phone_number) continue;
+      
+      const conv = getOrCreateConversation(lead.phone_number, lead.name);
+      insertedConvs.push(conv);
+
+      if (messageTemplate) {
+        // Replace placeholders
+        let body = messageTemplate;
+        const nameVal = lead.name || '';
+        body = body.replace(/\[Name\]/gi, nameVal);
+        
+        const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
+        insertedMessages.push({
+          id: result.lastInsertRowid,
+          conversation_id: conv.id,
+          direction: 'outbound',
+          from_number: fromNum,
+          to_number: conv.phone_number,
+          body: body,
+          status: 'queued'
+        });
+        
+        updateConvStmt.run(body, conv.id);
+      }
+    }
+  });
+
+  transaction(leads);
+  return { conversations: insertedConvs, messages: insertedMessages };
+}
+
 module.exports = {
   db,
   initDatabase,
@@ -219,5 +271,6 @@ module.exports = {
   insertMessage,
   updateMessageStatus,
   getNextQueuedMessage,
-  getQueueStats
+  getQueueStats,
+  bulkImportLeads
 };

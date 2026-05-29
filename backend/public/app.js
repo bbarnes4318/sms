@@ -4,6 +4,7 @@ let conversations = [];
 let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
+let parsedLeads = []; // Phase 2: Parsed leads storage
 
 // DOM Elements
 const conversationsList = document.getElementById('conversations-list');
@@ -43,6 +44,20 @@ const modalClose = document.getElementById('modal-close');
 const newChatForm = document.getElementById('new-chat-form');
 const newPhoneInput = document.getElementById('new-phone');
 const newNameInput = document.getElementById('new-name');
+
+// Phase 2: Lead Upload DOM Elements
+const btnUploadLeads = document.getElementById('btn-upload-leads');
+const uploadLeadsModal = document.getElementById('upload-leads-modal');
+const uploadClose = document.getElementById('upload-close');
+const uploadLeadsForm = document.getElementById('upload-leads-form');
+const csvDropZone = document.getElementById('csv-drop-zone');
+const csvFileInput = document.getElementById('csv-file-input');
+const browseTrigger = document.getElementById('browse-trigger');
+const selectedFileInfo = document.getElementById('selected-file-info');
+const uploadPreview = document.getElementById('upload-preview');
+const previewCount = document.getElementById('preview-count');
+const templateMessage = document.getElementById('template-message');
+const btnSubmitUpload = document.getElementById('btn-submit-upload');
 
 // 1. Initial Load & Setup
 window.addEventListener('DOMContentLoaded', () => {
@@ -88,6 +103,48 @@ window.addEventListener('DOMContentLoaded', () => {
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight - 6) + 'px';
   });
+
+  // Phase 2: Lead Upload Modal Event Listeners
+  btnUploadLeads.addEventListener('click', () => {
+    uploadLeadsModal.classList.add('open');
+    resetLeadUploadState();
+  });
+  uploadClose.addEventListener('click', () => uploadLeadsModal.classList.remove('open'));
+  uploadLeadsModal.addEventListener('click', (e) => {
+    if (e.target === uploadLeadsModal) uploadLeadsModal.classList.remove('open');
+  });
+
+  // Trigger file browser
+  browseTrigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    csvFileInput.click();
+  });
+  csvDropZone.addEventListener('click', () => csvFileInput.click());
+
+  // Drag & drop handlers
+  csvDropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    csvDropZone.classList.add('dragover');
+  });
+  csvDropZone.addEventListener('dragleave', () => {
+    csvDropZone.classList.remove('dragover');
+  });
+  csvDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    csvDropZone.classList.remove('dragover');
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleCsvFile(files[0]);
+    }
+  });
+
+  csvFileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+      handleCsvFile(e.target.files[0]);
+    }
+  });
+
+  uploadLeadsForm.addEventListener('submit', handleUploadLeadsSubmit);
 });
 
 // 2. Load API Data
@@ -518,4 +575,167 @@ function escapeHTML(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// Phase 2: CSV Parsing & Upload Functions
+function resetLeadUploadState() {
+  parsedLeads = [];
+  csvFileInput.value = '';
+  selectedFileInfo.style.display = 'none';
+  selectedFileInfo.textContent = '';
+  uploadPreview.style.display = 'none';
+  previewCount.textContent = '0';
+  templateMessage.value = '';
+  btnSubmitUpload.disabled = true;
+  btnSubmitUpload.textContent = 'Import & Queue';
+}
+
+function handleCsvFile(file) {
+  if (!file.name.endsWith('.csv')) {
+    alert("Please select a valid CSV file.");
+    resetLeadUploadState();
+    return;
+  }
+
+  selectedFileInfo.style.display = 'block';
+  selectedFileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    parseCSV(text);
+  };
+  reader.onerror = function() {
+    alert("Failed to read file.");
+    resetLeadUploadState();
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  try {
+    const lines = text.split(/\r?\n/);
+    if (lines.length < 2) {
+      alert("CSV file seems to be empty or missing data rows.");
+      resetLeadUploadState();
+      return;
+    }
+
+    // Split first line for headers
+    const headers = splitCsvLine(lines[0]).map(h => h.trim().replace(/^["']|["']$/g, ''));
+    
+    // Find column indexes
+    let phoneIdx = headers.findIndex(h => /phone|number|num|tel|mobile/i.test(h));
+    let nameIdx = headers.findIndex(h => /name|contact|lead/i.test(h));
+
+    // Fallbacks if headers don't match standard names
+    if (phoneIdx === -1) {
+      // If there are columns, default to index 1 or 0
+      phoneIdx = headers.length > 1 ? 1 : 0;
+    }
+    if (nameIdx === -1 && headers.length > 1) {
+      nameIdx = phoneIdx === 0 ? 1 : 0;
+    }
+
+    const tempLeads = [];
+    
+    // Process rows
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue; // Skip empty lines
+
+      const columns = splitCsvLine(line).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      if (columns.length === 0) continue;
+
+      const rawPhone = columns[phoneIdx !== -1 ? phoneIdx : 0] || '';
+      // Strip formatting: keep numbers and plus
+      const phone = rawPhone.replace(/[^\d+]/g, '');
+      const name = nameIdx !== -1 && nameIdx < columns.length ? columns[nameIdx] : '';
+
+      if (phone && phone.length >= 7) {
+        tempLeads.push({ phone_number: phone, name: name || null });
+      }
+    }
+
+    if (tempLeads.length === 0) {
+      alert("No valid leads (with phone numbers) could be parsed from the CSV.");
+      resetLeadUploadState();
+      return;
+    }
+
+    parsedLeads = tempLeads;
+    uploadPreview.style.display = 'block';
+    previewCount.textContent = parsedLeads.length;
+    btnSubmitUpload.disabled = false;
+    btnSubmitUpload.textContent = `Import & Queue ${parsedLeads.length} Leads`;
+    
+    console.log("Successfully parsed leads:", parsedLeads);
+  } catch (err) {
+    console.error("CSV parse error:", err);
+    alert("Error parsing CSV: " + err.message);
+    resetLeadUploadState();
+  }
+}
+
+// Custom CSV line splitter that handles quotes and commas correctly
+function splitCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' || char === "'") {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+async function handleUploadLeadsSubmit(e) {
+  e.preventDefault();
+  if (parsedLeads.length === 0) return;
+
+  btnSubmitUpload.disabled = true;
+  btnSubmitUpload.textContent = 'Importing...';
+
+  const template = templateMessage.value.trim();
+  const payload = {
+    leads: parsedLeads,
+    message_template: template || null
+  };
+
+  try {
+    const res = await fetch('/api/leads/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      uploadLeadsModal.classList.remove('open');
+      alert(`Success! Imported ${data.imported_count} leads and queued ${data.queued_count} messages.`);
+      
+      // Refresh app state
+      await loadConversations();
+      resetLeadUploadState();
+    } else {
+      const err = await res.json();
+      alert("Error importing leads: " + err.error);
+      btnSubmitUpload.disabled = false;
+      btnSubmitUpload.textContent = `Import & Queue ${parsedLeads.length} Leads`;
+    }
+  } catch (err) {
+    console.error("Lead upload error:", err);
+    alert("Connection error uploading leads.");
+    btnSubmitUpload.disabled = false;
+    btnSubmitUpload.textContent = `Import & Queue ${parsedLeads.length} Leads`;
+  }
 }
