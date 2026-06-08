@@ -393,12 +393,13 @@ function renderConversations() {
     }
 
     const preview = c.last_message_text || 'No messages';
+    const repliedDot = c.last_message_direction === 'inbound' ? `<span class="conv-replied-dot" title="New Reply"></span>` : '';
 
     item.innerHTML = `
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
-          <span class="conv-name">${displayName}</span>
+          <span class="conv-name">${displayName}${repliedDot}</span>
           <span class="conv-time">${timeStr}</span>
         </div>
         <div class="conv-preview">${preview}</div>

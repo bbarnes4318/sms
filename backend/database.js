@@ -170,6 +170,7 @@ function updateSettings(settingsObj) {
 function getConversations() {
   return db.prepare(`
     SELECT c.*, 
+           (SELECT direction FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message_direction,
            (SELECT MAX(created_at) FROM messages WHERE conversation_id = c.id AND direction = 'inbound') as last_inbound_at
     FROM conversations c
     ORDER BY 

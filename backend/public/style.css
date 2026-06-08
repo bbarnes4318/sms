@@ -327,6 +327,19 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+}
+
+.conv-replied-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #00e676; /* sharp neon green */
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: 8px;
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.8);
+  flex-shrink: 0;
 }
 
 .conv-time {
