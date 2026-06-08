@@ -60,6 +60,90 @@ function initDatabase() {
   insertSetting.run('bulkvs_token', '50e77367256f3bd823f44d13dc1e8d17');
   insertSetting.run('sender_number', '+18887885527');
   insertSetting.run('send_interval_ms', '2000'); // 2 seconds between sends
+  insertSetting.run('fractel_username', '');
+  insertSetting.run('fractel_password', '');
+  insertSetting.run('fractel_sender_number', '8653456051');
+  insertSetting.run('fractel_brand_id', 'B7PS8UH');
+  insertSetting.run('fractel_enabled_dids', '3212372724,3215777735,3215777754,4072049626,4244204981,6283888618,6894658835,7272865079,7272882904,8653456051');
+
+  // Run database migration to normalize existing conversation numbers
+  migrateAndNormalizeDatabase();
+}
+
+function normalizePhoneNumber(phone) {
+  if (!phone) return '';
+  let cleaned = phone.replace(/[^\d+]/g, '');
+  if (cleaned.startsWith('+')) {
+    return cleaned === '+' ? '' : cleaned;
+  }
+  if (cleaned.length === 10) {
+    return '+1' + cleaned;
+  }
+  if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    return '+' + cleaned;
+  }
+  return cleaned;
+}
+
+function migrateAndNormalizeDatabase() {
+  console.log("Starting database normalization and migration...");
+  const conversations = db.prepare('SELECT * FROM conversations').all();
+  
+  const mergeStmt = db.prepare('UPDATE messages SET conversation_id = ? WHERE conversation_id = ?');
+  const deleteConvStmt = db.prepare('DELETE FROM conversations WHERE id = ?');
+  const updateConvPhoneStmt = db.prepare('UPDATE conversations SET phone_number = ? WHERE id = ?');
+  const updateLastMessageStmt = db.prepare(`
+    UPDATE conversations 
+    SET last_message_text = ?, last_message_at = ? 
+    WHERE id = ?
+  `);
+
+  db.transaction(() => {
+    const normMap = {};
+
+    for (const c of conversations) {
+      const normalized = normalizePhoneNumber(c.phone_number);
+      
+      if (normMap[normalized]) {
+        const targetConv = normMap[normalized];
+        console.log(`Merging duplicate conversation ID ${c.id} (${c.phone_number}) into target ID ${targetConv.id} (${normalized})...`);
+        
+        // Merge messages
+        mergeStmt.run(targetConv.id, c.id);
+        
+        // Determine latest last_message_at
+        let latestText = targetConv.last_message_text;
+        let latestAt = targetConv.last_message_at;
+        
+        if (c.last_message_at) {
+          if (!latestAt || new Date(c.last_message_at) > new Date(latestAt)) {
+            latestText = c.last_message_text;
+            latestAt = c.last_message_at;
+          }
+        }
+        
+        // Update target conversation last message details
+        updateLastMessageStmt.run(latestText, latestAt, targetConv.id);
+        
+        // Update target name if not set
+        if (!targetConv.name && c.name) {
+          db.prepare('UPDATE conversations SET name = ? WHERE id = ?').run(c.name, targetConv.id);
+          targetConv.name = c.name;
+        }
+
+        // Delete duplicate conversation
+        deleteConvStmt.run(c.id);
+      } else {
+        if (normalized !== c.phone_number) {
+          console.log(`Updating conversation ID ${c.id} phone number: ${c.phone_number} -> ${normalized}`);
+          updateConvPhoneStmt.run(normalized, c.id);
+          c.phone_number = normalized;
+        }
+        normMap[normalized] = c;
+      }
+    }
+  })();
+  console.log("Database normalization and migration completed.");
 }
 
 // Helpers
@@ -85,14 +169,22 @@ function updateSettings(settingsObj) {
 
 function getConversations() {
   return db.prepare(`
-    SELECT * FROM conversations 
-    ORDER BY last_message_at DESC, created_at DESC
+    SELECT c.*, 
+           (SELECT MAX(created_at) FROM messages WHERE conversation_id = c.id AND direction = 'inbound') as last_inbound_at
+    FROM conversations c
+    ORDER BY 
+      CASE WHEN last_inbound_at IS NOT NULL THEN 0 ELSE 1 END,
+      last_inbound_at DESC,
+      last_message_at DESC,
+      created_at DESC
   `).all();
 }
 
 function getOrCreateConversation(phoneNumber, contactName = null) {
-  // Normalize phone number: strip non-digits except +
-  const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
+  const cleanPhone = normalizePhoneNumber(phoneNumber);
+  if (!cleanPhone) {
+    throw new Error("Invalid phone number");
+  }
   
   // Try to find
   let conv = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(cleanPhone);
@@ -117,6 +209,7 @@ function getOrCreateConversation(phoneNumber, contactName = null) {
   }
   return conv;
 }
+
 
 function getMessages(conversationId) {
   return db.prepare(`
@@ -208,9 +301,9 @@ function getQueueStats() {
   };
 }
 
-function bulkImportLeads(leads, messageTemplate) {
+function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   const settings = getSettings();
-  const fromNum = settings.sender_number || '+18887885527';
+  const fromNum = fromNumber || settings.sender_number || '+18887885527';
   
   const insertMessageStmt = db.prepare(`
     INSERT INTO messages (

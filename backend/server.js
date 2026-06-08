@@ -98,7 +98,7 @@ app.get('/api/conversations/:id/messages', (req, res) => {
 // 4. Queue a message (Outbound)
 app.post('/api/conversations/:id/messages', (req, res) => {
   const convId = parseInt(req.params.id, 10);
-  const { body, media_urls, scheduled_at } = req.body;
+  const { body, media_urls, scheduled_at, from_number } = req.body;
   
   try {
     // Find conversation
@@ -109,7 +109,7 @@ app.post('/api/conversations/:id/messages', (req, res) => {
     }
 
     const settings = db.getSettings();
-    const fromNum = settings.sender_number || '+18887885527';
+    const fromNum = from_number || settings.sender_number || '+18887885527';
 
     const msgData = {
       conversation_id: convId,
@@ -139,13 +139,13 @@ app.post('/api/conversations/:id/messages', (req, res) => {
 
 // 4.5. Bulk Upload Leads & Campaign Sending
 app.post('/api/leads/upload', (req, res) => {
-  const { leads, message_template } = req.body;
+  const { leads, message_template, from_number } = req.body;
   if (!leads || !Array.isArray(leads)) {
     return res.status(400).json({ error: 'Leads array is required' });
   }
 
   try {
-    const result = db.bulkImportLeads(leads, message_template || null);
+    const result = db.bulkImportLeads(leads, message_template || null, from_number || null);
     
     // Broadcast new messages via WebSockets if any
     if (result.messages.length > 0) {
@@ -179,10 +179,84 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
+async function configureFractelWebhook(settings, hostUrl) {
+  const username = settings.fractel_username;
+  const password = settings.fractel_password;
+  const senderNumber = settings.fractel_sender_number;
+  
+  if (!username || !password || !senderNumber) {
+    console.log("FracTEL credentials or sender number missing, skipping webhook auto-config.");
+    return;
+  }
+
+  try {
+    console.log("Requesting token for FracTEL webhook configuration...");
+    const authRes = await fetch('https://api.fonestorm.com/v2/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, expires: 3600 })
+    });
+    
+    if (!authRes.ok) {
+      console.error("FracTEL auth failed for webhook config:", authRes.status);
+      return;
+    }
+    
+    const authData = await authRes.json();
+    const token = authData.auth && authData.auth.token;
+    if (!token) {
+      console.error("No token in FracTEL auth response for webhook config");
+      return;
+    }
+
+    let cleanNumber = senderNumber.replace(/[^\d]/g, '');
+    if (cleanNumber.length === 11 && cleanNumber.startsWith('1')) {
+      cleanNumber = cleanNumber.substring(1);
+    }
+    const webhookUrl = `${hostUrl}/webhook/inbound`;
+    console.log(`Configuring FracTEL inbound webhook for DID ${cleanNumber} to: ${webhookUrl}`);
+    
+    const putRes = await fetch(`https://api.fonestorm.com/v2/fonenumbers/${cleanNumber}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'token': token
+      },
+      body: JSON.stringify({
+        sms_options: {
+          receive_notify: {
+            type: 'Callback',
+            method: 'JSON',
+            url: webhookUrl
+          }
+        }
+      })
+    });
+
+    const putData = await putRes.json();
+    console.log("FracTEL webhook configuration response:", JSON.stringify(putData));
+  } catch (err) {
+    console.error("Failed to auto-configure FracTEL webhook:", err);
+  }
+}
+
 // 6. Update settings
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', async (req, res) => {
   try {
     const updated = db.updateSettings(req.body);
+    
+    // Determine the host URL dynamically
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers.host;
+    const hostUrl = `${protocol}://${host}`;
+    
+    // Do NOT automatically configure/change webhook settings on FracTEL to protect existing campaigns/apps.
+    /*
+    configureFractelWebhook(updated, hostUrl).catch(err => {
+      console.error("FracTEL webhook config error:", err);
+    });
+    */
+
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -204,7 +278,13 @@ app.post('/webhook/inbound', (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   console.log(`Inbound webhook received from IP ${ip}:`, JSON.stringify(req.body));
   
-  const { From, To, Message, MediaURLs, DeliveryReceipt, RefId } = req.body;
+  const From = req.body.From || req.body.from;
+  const To = req.body.To || req.body.to;
+  const Message = req.body.Message || req.body.message;
+  const MediaURLs = req.body.MediaURLs || (req.body.media ? [req.body.media] : null);
+  const DeliveryReceipt = req.body.DeliveryReceipt || req.body.delivery_receipt;
+  const RefId = req.body.RefId || req.body.id;
+
   if (!From) {
     return res.status(400).send('Missing From field');
   }
@@ -243,7 +323,7 @@ app.post('/webhook/inbound', (req, res) => {
     }
 
     // Get target number
-    const toNum = (To && To[0]) || '';
+    const toNum = (Array.isArray(To) ? To[0] : To) || '';
     
     // Create/get conversation for sender
     // Normalize From number to database format

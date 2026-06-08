@@ -77,6 +77,12 @@
           <div class="composer-inputs">
             <textarea id="message-input" placeholder="Type a message..." rows="1" required></textarea>
             <div class="composer-meta-row">
+              <div class="sender-selector-container">
+                <span class="sender-label">From:</span>
+                <select id="composer-sender-select" class="sender-select">
+                  <!-- Dynamic sender options populated from settings -->
+                </select>
+              </div>
               <div class="char-counter" id="chat-char-counter">0 / 160 (1 segment)</div>
             </div>
             <div class="mms-input-row" id="mms-input-row">
@@ -146,6 +152,29 @@
             <label for="setting-token">Bulkvs API Password/Token</label>
             <input type="password" id="setting-token" required>
           </div>
+
+          <div class="settings-divider">FracTEL SMS Gateway</div>
+
+          <div class="form-group">
+            <label for="setting-fractel-sender">FracTEL Sender Number (DID)</label>
+            <input type="text" id="setting-fractel-sender" value="2005555185">
+            <small class="form-help">FracTEL sub-account phone number for texts.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="setting-fractel-brand">FracTEL Brand ID</label>
+            <input type="text" id="setting-fractel-brand" value="B7PS8UH">
+          </div>
+
+          <div class="form-group">
+            <label for="setting-fractel-username">FracTEL Username</label>
+            <input type="text" id="setting-fractel-username">
+          </div>
+
+          <div class="form-group">
+            <label for="setting-fractel-password">FracTEL Password/API Secret</label>
+            <input type="password" id="setting-fractel-password">
+          </div>
           
           <button type="submit" class="btn-secondary">Save Configuration</button>
           <div class="settings-status" id="settings-status"></div>
@@ -206,6 +235,13 @@
         
         <div class="upload-preview" id="upload-preview" style="display: none;">
           <p class="preview-stats"><strong id="preview-count">0</strong> leads parsed successfully.</p>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="campaign-sender-select">Send Campaign From</label>
+          <select id="campaign-sender-select" class="sender-select" style="width: 100%;">
+            <!-- Dynamic options -->
+          </select>
         </div>
 
         <div class="form-group" style="margin-top: 16px;">

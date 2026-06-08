@@ -31,6 +31,14 @@ const settingsStatus = document.getElementById('settings-status');
 const webhookUrlDisplay = document.getElementById('webhook-url-display');
 const btnCopyWebhook = document.getElementById('btn-copy-webhook');
 
+// FracTEL settings elements
+const settingFractelSender = document.getElementById('setting-fractel-sender');
+const settingFractelBrand = document.getElementById('setting-fractel-brand');
+const settingFractelUsername = document.getElementById('setting-fractel-username');
+const settingFractelPassword = document.getElementById('setting-fractel-password');
+const composerSenderSelect = document.getElementById('composer-sender-select');
+const campaignSenderSelect = document.getElementById('campaign-sender-select');
+
 // Stats Elements
 const statQueued = document.getElementById('stat-queued');
 const statSending = document.getElementById('stat-sending');
@@ -174,6 +182,39 @@ async function loadConversations() {
   }
 }
 
+function updateSenderDropdowns(settings) {
+  const bulkvsNumber = settings.sender_number || '+18887885527';
+  const fractelDefault = settings.fractel_sender_number || '8653456051';
+
+  const options = [];
+  
+  // Add BulkVS as disabled/grayed out
+  if (bulkvsNumber) {
+    options.push({ value: bulkvsNumber, label: `BulkVS (${bulkvsNumber}) - Disabled`, disabled: true });
+  }
+
+  // Add ONLY the primary/default FracTEL number
+  options.push({ value: fractelDefault, label: `FracTEL (${fractelDefault})`, disabled: false });
+
+  const renderOption = opt => {
+    if (opt.disabled) {
+      return `<option value="${opt.value}" disabled style="color: #666; background-color: #1a1d24;">${opt.label}</option>`;
+    } else {
+      return `<option value="${opt.value}" selected>${opt.label}</option>`;
+    }
+  };
+
+  // Populate composer sender select
+  if (composerSenderSelect) {
+    composerSenderSelect.innerHTML = options.map(renderOption).join('');
+  }
+
+  // Populate campaign sender select
+  if (campaignSenderSelect) {
+    campaignSenderSelect.innerHTML = options.map(renderOption).join('');
+  }
+}
+
 async function loadSettings() {
   try {
     const res = await fetch('/api/settings');
@@ -184,6 +225,13 @@ async function loadSettings() {
     settingIntervalVal.textContent = `${settingInterval.value} ms`;
     settingUsername.value = settings.bulkvs_username || '';
     settingToken.value = settings.bulkvs_token || '';
+
+    if (settingFractelSender) settingFractelSender.value = settings.fractel_sender_number || '2005555185';
+    if (settingFractelBrand) settingFractelBrand.value = settings.fractel_brand_id || 'B7PS8UH';
+    if (settingFractelUsername) settingFractelUsername.value = settings.fractel_username || '';
+    if (settingFractelPassword) settingFractelPassword.value = settings.fractel_password || '';
+
+    updateSenderDropdowns(settings);
   } catch (err) {
     console.error("Error loading settings:", err);
   }
@@ -483,9 +531,12 @@ async function handleSendMessage(e) {
   const btnSend = document.getElementById('btn-send');
   btnSend.disabled = true;
 
+  const fromNum = composerSenderSelect ? composerSenderSelect.value : null;
+
   const payload = {
     body: body,
-    media_urls: mediaUrl ? [mediaUrl] : null
+    media_urls: mediaUrl ? [mediaUrl] : null,
+    from_number: fromNum
   };
 
   try {
@@ -559,7 +610,11 @@ async function handleSaveSettings(e) {
     sender_number: settingSender.value.trim(),
     send_interval_ms: settingInterval.value,
     bulkvs_username: settingUsername.value.trim(),
-    bulkvs_token: settingToken.value.trim()
+    bulkvs_token: settingToken.value.trim(),
+    fractel_sender_number: settingFractelSender.value.trim(),
+    fractel_brand_id: settingFractelBrand.value.trim(),
+    fractel_username: settingFractelUsername.value.trim(),
+    fractel_password: settingFractelPassword.value.trim()
   };
 
   try {
@@ -570,8 +625,12 @@ async function handleSaveSettings(e) {
     });
 
     if (res.ok) {
+      const updated = await res.json();
       settingsStatus.textContent = 'Settings saved successfully!';
       settingsStatus.className = 'settings-status success';
+      
+      updateSenderDropdowns(updated);
+      
       setTimeout(() => { settingsStatus.textContent = ''; }, 3000);
     } else {
       settingsStatus.textContent = 'Error saving settings';
@@ -724,9 +783,12 @@ async function handleUploadLeadsSubmit(e) {
   btnSubmitUpload.textContent = 'Importing...';
 
   const template = templateMessage.value.trim();
+  const fromNum = campaignSenderSelect ? campaignSenderSelect.value : null;
+
   const payload = {
     leads: parsedLeads,
-    message_template: template || null
+    message_template: template || null,
+    from_number: fromNum
   };
 
   try {
