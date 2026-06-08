@@ -39,6 +39,26 @@
         </div>
       </div>
       
+      <!-- Filters Container -->
+      <div class="filters-container">
+        <div class="view-filters">
+          <button type="button" class="filter-pill active" data-filter="replied">Replied</button>
+          <button type="button" class="filter-pill" data-filter="all">All</button>
+          <button type="button" class="filter-pill" data-filter="no-replies">No Replies</button>
+        </div>
+        <div class="date-filters">
+          <div class="date-input-group">
+            <label for="filter-from-date">From</label>
+            <input type="date" id="filter-from-date">
+          </div>
+          <div class="date-input-group">
+            <label for="filter-to-date">To</label>
+            <input type="date" id="filter-to-date">
+          </div>
+          <button type="button" class="btn-clear-date" id="btn-clear-date" title="Clear Date Filters">&times;</button>
+        </div>
+      </div>
+      
       <div class="conversations-list" id="conversations-list">
         <!-- Dynamic conversations will be inserted here -->
         <div class="list-placeholder">Loading conversations...</div>

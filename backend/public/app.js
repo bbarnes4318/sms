@@ -5,6 +5,9 @@ let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
 let parsedLeads = []; // Phase 2: Parsed leads storage
+let currentFilter = 'replied'; // Phase 6: Default view is 'replied'
+let fromDate = '';
+let toDate = '';
 
 // DOM Elements
 const conversationsList = document.getElementById('conversations-list');
@@ -71,6 +74,11 @@ const btnSubmitUpload = document.getElementById('btn-submit-upload');
 const chatCharCounter = document.getElementById('chat-char-counter');
 const templateCharCounter = document.getElementById('template-char-counter');
 
+// Phase 6: Sidebar Filtering DOM Elements
+const filterFromDate = document.getElementById('filter-from-date');
+const filterToDate = document.getElementById('filter-to-date');
+const btnClearDate = document.getElementById('btn-clear-date');
+
 // 1. Initial Load & Setup
 window.addEventListener('DOMContentLoaded', () => {
   loadConversations();
@@ -84,6 +92,33 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Event Listeners
   searchInput.addEventListener('input', filterConversations);
+
+  // Phase 6: View Filters click handlers
+  document.querySelectorAll('.filter-pill').forEach(pill => {
+    pill.addEventListener('click', (e) => {
+      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentFilter = pill.dataset.filter;
+      filterConversations();
+    });
+  });
+
+  // Phase 6: Date Filters change handlers
+  filterFromDate.addEventListener('change', (e) => {
+    fromDate = e.target.value;
+    filterConversations();
+  });
+  filterToDate.addEventListener('change', (e) => {
+    toDate = e.target.value;
+    filterConversations();
+  });
+  btnClearDate.addEventListener('click', () => {
+    filterFromDate.value = '';
+    filterToDate.value = '';
+    fromDate = '';
+    toDate = '';
+    filterConversations();
+  });
   chatForm.addEventListener('submit', handleSendMessage);
   btnNewChat.addEventListener('click', () => newChatModal.classList.add('open'));
   modalClose.addEventListener('click', () => newChatModal.classList.remove('open'));
@@ -366,9 +401,25 @@ function renderConversations() {
   conversationsList.innerHTML = '';
   
   const filtered = conversations.filter(c => {
+    // 1. Search query filter
     const name = (c.name || '').toLowerCase();
     const phone = c.phone_number.toLowerCase();
-    return name.includes(query) || phone.includes(query);
+    const matchesSearch = name.includes(query) || phone.includes(query);
+    if (!matchesSearch) return false;
+
+    // 2. Response Status Filter (Phase 6)
+    const hasReplies = c.last_inbound_at !== null;
+    if (currentFilter === 'replied' && !hasReplies) return false;
+    if (currentFilter === 'no-replies' && hasReplies) return false;
+
+    // 3. Date Range Filter (Phase 6)
+    const activityDate = getLocalDateString(c.last_message_at || c.created_at);
+    if (activityDate) {
+      if (fromDate && activityDate < fromDate) return false;
+      if (toDate && activityDate > toDate) return false;
+    }
+
+    return true;
   });
 
   if (filtered.length === 0) {
@@ -875,5 +926,26 @@ function updateCharCounter(textarea, counterEl) {
     counterEl.classList.add('warning');
   } else if (details.segments >= 3) {
     counterEl.classList.add('danger');
+  }
+}
+
+// Phase 6: Helper to convert ISO/SQLite datetime string to local YYYY-MM-DD string
+function getLocalDateString(dateStr) {
+  if (!dateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  
+  const parts = dateStr.split(' ');
+  if (parts[0] && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+    return parts[0];
+  }
+  
+  try {
+    const date = new Date(dateStr);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (e) {
+    return null;
   }
 }
