@@ -84,6 +84,20 @@ app.post('/api/conversations', (req, res) => {
   }
 });
 
+// 2.5. Delete conversation
+app.delete('/api/conversations/:id', (req, res) => {
+  const convId = parseInt(req.params.id, 10);
+  try {
+    db.deleteConversation(convId);
+    // Broadcast updates
+    broadcast('conversation_deleted', { id: convId });
+    broadcast('queue_status', db.getQueueStats());
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 3. Get messages for a conversation
 app.get('/api/conversations/:id/messages', (req, res) => {
   const convId = parseInt(req.params.id, 10);

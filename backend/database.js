@@ -354,6 +354,16 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   return { conversations: insertedConvs, messages: insertedMessages };
 }
 
+function deleteConversation(id) {
+  const deleteMsgs = db.prepare('DELETE FROM messages WHERE conversation_id = ?');
+  const deleteConv = db.prepare('DELETE FROM conversations WHERE id = ?');
+  const transaction = db.transaction((convId) => {
+    deleteMsgs.run(convId);
+    deleteConv.run(convId);
+  });
+  return transaction(id);
+}
+
 module.exports = {
   db,
   initDatabase,
@@ -366,5 +376,7 @@ module.exports = {
   updateMessageStatus,
   getNextQueuedMessage,
   getQueueStats,
-  bulkImportLeads
+  bulkImportLeads,
+  deleteConversation
 };
+

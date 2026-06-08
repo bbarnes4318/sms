@@ -22,6 +22,7 @@ const chatForm = document.getElementById('chat-form');
 const messageInput = document.getElementById('message-input');
 const mediaUrlInput = document.getElementById('media-url-input');
 const wsStatus = document.getElementById('ws-status');
+const btnDeleteChat = document.getElementById('btn-delete-chat');
 
 // Settings Elements
 const settingsForm = document.getElementById('settings-form');
@@ -120,6 +121,7 @@ window.addEventListener('DOMContentLoaded', () => {
     filterConversations();
   });
   chatForm.addEventListener('submit', handleSendMessage);
+  btnDeleteChat.addEventListener('click', handleDeleteActiveConversation);
   btnNewChat.addEventListener('click', () => newChatModal.classList.add('open'));
   modalClose.addEventListener('click', () => newChatModal.classList.remove('open'));
   newChatForm.addEventListener('submit', handleStartNewChat);
@@ -327,7 +329,17 @@ function handleWsMessage(payload) {
     case 'message_status':
       handleIncomingMessageStatusUpdate(data);
       break;
+    case 'conversation_deleted':
+      handleIncomingConversationDeleted(data);
+      break;
   }
+}
+
+function handleIncomingConversationDeleted(data) {
+  if (activeConversation && activeConversation.id === data.id) {
+    resetChatToWelcomeBox();
+  }
+  loadConversations();
 }
 
 // Update Stats Cards
@@ -484,8 +496,9 @@ async function selectConversation(conv) {
   activeContactName.textContent = conv.name || conv.phone_number;
   activeContactPhone.textContent = conv.name ? conv.phone_number : 'SMS Contact';
   
-  // Show input field
+  // Show input field and delete button
   chatComposerContainer.style.display = 'block';
+  btnDeleteChat.style.display = 'block';
   updateCharCounter(messageInput, chatCharCounter);
   
   // Load messages
@@ -614,6 +627,60 @@ async function handleSendMessage(e) {
   } finally {
     btnSend.disabled = false;
   }
+}
+
+// 8.5. Delete Active Conversation Thread
+async function handleDeleteActiveConversation() {
+  if (!activeConversation) return;
+
+  const confirmed = confirm(`Are you sure you want to delete the conversation thread with ${activeConversation.name || activeConversation.phone_number}? This will permanently delete all messages.`);
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch(`/api/conversations/${activeConversation.id}`, {
+      method: 'DELETE'
+    });
+
+    if (res.ok) {
+      resetChatToWelcomeBox();
+      await loadConversations();
+    } else {
+      const err = await res.json();
+      alert("Error deleting conversation: " + err.error);
+    }
+  } catch (err) {
+    console.error("Delete conversation error:", err);
+    alert("Connection error deleting conversation.");
+  }
+}
+
+function resetChatToWelcomeBox() {
+  activeConversation = null;
+  
+  // Reset active conversation sidebar selection styling
+  document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
+
+  // Reset Chat Header
+  activeAvatar.textContent = '#';
+  activeContactName.textContent = 'Select a conversation';
+  activeContactPhone.textContent = 'Select or start a chat to send messages';
+  
+  // Hide inputs and delete button
+  chatComposerContainer.style.display = 'none';
+  btnDeleteChat.style.display = 'none';
+  
+  // Reset message feed placeholder
+  messagesFeed.innerHTML = `
+    <div class="feed-placeholder">
+      <div class="welcome-box">
+        <div class="welcome-icon">
+          <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="welcome-svg"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        </div>
+        <h3>Welcome to Leadzer SMS Gateway</h3>
+        <p>Select a contact from the sidebar or click "New Chat" to begin sending rate-limited messages securely.</p>
+      </div>
+    </div>
+  `;
 }
 
 // 9. Start New Chat Modal Submit
