@@ -389,7 +389,7 @@ function handleIncomingMessageStatusUpdate(update) {
       
       const meta = msgElement.querySelector('.message-meta');
       if (meta && update.status === 'sent') {
-        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatMessageTimestamp(new Date());
         // update text content
         const timeNode = meta.firstChild;
         if (timeNode) timeNode.textContent = timeStr + ' ';
@@ -451,8 +451,7 @@ function renderConversations() {
     // Format timestamp
     let timeStr = '';
     if (c.last_message_at) {
-      const date = new Date(c.last_message_at);
-      timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      timeStr = formatMessageTimestamp(c.last_message_at);
     }
 
     const preview = c.last_message_text || 'No messages';
@@ -538,7 +537,7 @@ function appendMessageToFeed(msg) {
 
   // Format time
   const date = new Date(msg.created_at || msg.sent_at || Date.now());
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = formatMessageTimestamp(date);
 
   // Attachments
   let attachmentHtml = '';
@@ -1016,3 +1015,16 @@ function getLocalDateString(dateStr) {
     return null;
   }
 }
+
+// Phase 8: Helper to format message timestamp to date and time (e.g. Jun 8, 12:45 PM)
+function formatMessageTimestamp(dateInput) {
+  if (!dateInput) return '';
+  const date = new Date(dateInput);
+  return date.toLocaleString([], { 
+    month: 'short', 
+    day: 'numeric', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
+}
+
