@@ -211,6 +211,23 @@ window.addEventListener('DOMContentLoaded', () => {
 
   uploadLeadsForm.addEventListener('submit', handleUploadLeadsSubmit);
 
+  // Settings Modal Toggle handlers
+  const btnOpenSettings = document.getElementById('btn-open-settings');
+  const settingsModal = document.getElementById('settings-modal');
+  const settingsClose = document.getElementById('settings-close');
+
+  btnOpenSettings.addEventListener('click', () => {
+    settingsModal.classList.add('open');
+  });
+
+  settingsClose.addEventListener('click', () => {
+    settingsModal.classList.remove('open');
+  });
+
+  settingsModal.addEventListener('click', (e) => {
+    if (e.target === settingsModal) settingsModal.classList.remove('open');
+  });
+
   // Bulk messaging elements
   const chkSelectAllConvs = document.getElementById('chk-select-all-convs');
   const btnBulkMsg = document.getElementById('btn-bulk-msg');

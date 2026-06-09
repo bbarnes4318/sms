@@ -134,11 +134,17 @@
       </footer>
     </main>
     
-    <!-- Right Panel: Queue & Settings -->
+    <!-- Right Panel: Queue Stats -->
     <section class="dashboard-panel">
       <!-- Queue Stats -->
       <div class="panel-section">
-        <h3>Queue Monitoring</h3>
+        <div class="panel-header-row">
+          <h3>Queue Monitoring</h3>
+          <button type="button" id="btn-open-settings" class="btn-settings-link" title="Open Gateway Settings">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Settings</span>
+          </button>
+        </div>
         <div class="stats-grid">
           <div class="stat-card card-queued">
             <div class="stat-value" id="stat-queued">0</div>
@@ -156,75 +162,6 @@
             <div class="stat-value" id="stat-failed">0</div>
             <div class="stat-label">Failed</div>
           </div>
-        </div>
-      </div>
-      
-      <!-- System Settings -->
-      <div class="panel-section">
-        <h3>Gateway Settings</h3>
-        <form id="settings-form" class="settings-form">
-          <div class="form-group">
-            <label for="setting-sender">Toll-Free Sender Number</label>
-            <input type="text" id="setting-sender" value="+18887885527" required>
-            <small class="form-help">Approved toll-free sender number.</small>
-          </div>
-          
-          <div class="form-group">
-            <label for="setting-interval">Send Rate Limit Interval (ms)</label>
-            <div class="range-container">
-              <input type="range" id="setting-interval" min="500" max="10000" step="500" value="2000">
-              <span class="range-val" id="setting-interval-val">2000 ms</span>
-            </div>
-            <small class="form-help">Controls pacing. Carrier recommended: >= 2000ms.</small>
-          </div>
-          
-          <div class="form-group">
-            <label for="setting-username">Bulkvs Username</label>
-            <input type="text" id="setting-username" required>
-          </div>
-          
-          <div class="form-group">
-            <label for="setting-token">Bulkvs API Password/Token</label>
-            <input type="password" id="setting-token" required>
-          </div>
-
-          <div class="settings-divider">FracTEL SMS Gateway</div>
-
-          <div class="form-group">
-            <label for="setting-fractel-sender">FracTEL Sender Number (DID)</label>
-            <input type="text" id="setting-fractel-sender" value="2005555185">
-            <small class="form-help">FracTEL sub-account phone number for texts.</small>
-          </div>
-
-          <div class="form-group">
-            <label for="setting-fractel-brand">FracTEL Brand ID</label>
-            <input type="text" id="setting-fractel-brand" value="B7PS8UH">
-          </div>
-
-          <div class="form-group">
-            <label for="setting-fractel-username">FracTEL Username</label>
-            <input type="text" id="setting-fractel-username">
-          </div>
-
-          <div class="form-group">
-            <label for="setting-fractel-password">FracTEL Password/API Secret</label>
-            <input type="password" id="setting-fractel-password">
-          </div>
-          
-          <button type="submit" class="btn-secondary">Save Configuration</button>
-          <div class="settings-status" id="settings-status"></div>
-        </form>
-      </div>
-
-      <!-- Inbound Webhook Instructions -->
-      <div class="panel-section webhook-info-card">
-        <h3>Inbound Webhook Config</h3>
-        <p class="webhook-desc">To receive replies, add this URL as a <strong>POST</strong> webhook in your Bulkvs Portal under <em>Messaging -> Message Webhook</em>:</p>
-        <div class="webhook-url-box">
-          <code id="webhook-url-display">http://[server_ip]/webhook/inbound</code>
-          <button id="btn-copy-webhook" class="btn-copy" title="Copy URL">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-svg"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-          </button>
         </div>
       </div>
     </section>
@@ -323,6 +260,80 @@
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-bulk">Send Message</button>
       </form>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal" id="settings-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Gateway Settings</h2>
+        <button class="modal-close" id="settings-close">&times;</button>
+      </div>
+      <form id="settings-form" class="settings-form">
+        <div class="form-group">
+          <label for="setting-sender">Toll-Free Sender Number</label>
+          <input type="text" id="setting-sender" value="+18887885527" required>
+          <small class="form-help">Approved toll-free sender number.</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="setting-interval">Send Rate Limit Interval (ms)</label>
+          <div class="range-container">
+            <input type="range" id="setting-interval" min="500" max="10000" step="500" value="2000">
+            <span class="range-val" id="setting-interval-val">2000 ms</span>
+          </div>
+          <small class="form-help">Controls pacing. Carrier recommended: >= 2000ms.</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="setting-username">Bulkvs Username</label>
+          <input type="text" id="setting-username" required>
+        </div>
+        
+        <div class="form-group">
+          <label for="setting-token">Bulkvs API Password/Token</label>
+          <input type="password" id="setting-token" required>
+        </div>
+
+        <div class="settings-divider">FracTEL SMS Gateway</div>
+
+        <div class="form-group">
+          <label for="setting-fractel-sender">FracTEL Sender Number (DID)</label>
+          <input type="text" id="setting-fractel-sender" value="2005555185">
+          <small class="form-help">FracTEL sub-account phone number for texts.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="setting-fractel-brand">FracTEL Brand ID</label>
+          <input type="text" id="setting-fractel-brand" value="B7PS8UH">
+        </div>
+
+        <div class="form-group">
+          <label for="setting-fractel-username">FracTEL Username</label>
+          <input type="text" id="setting-fractel-username">
+        </div>
+
+        <div class="form-group">
+          <label for="setting-fractel-password">FracTEL Password/API Secret</label>
+          <input type="password" id="setting-fractel-password">
+        </div>
+        
+        <button type="submit" class="btn-primary btn-block">Save Configuration</button>
+        <div class="settings-status" id="settings-status"></div>
+      </form>
+
+      <!-- Inbound Webhook Instructions -->
+      <div class="panel-section webhook-info-card" style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+        <h3>Inbound Webhook Config</h3>
+        <p class="webhook-desc">To receive replies, add this URL as a <strong>POST</strong> webhook in your Bulkvs Portal under <em>Messaging -> Message Webhook</em>:</p>
+        <div class="webhook-url-box">
+          <code id="webhook-url-display">http://[server_ip]/webhook/inbound</code>
+          <button id="btn-copy-webhook" class="btn-copy" title="Copy URL">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-svg"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
