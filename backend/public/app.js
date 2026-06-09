@@ -8,6 +8,8 @@ let parsedLeads = []; // Phase 2: Parsed leads storage
 let currentFilter = 'replied'; // Phase 6: Default view is 'replied'
 let fromDate = '';
 let toDate = '';
+let selectedConversations = new Set(); // Selection/Bulk Actions state
+
 
 // DOM Elements
 const conversationsList = document.getElementById('conversations-list');
@@ -79,6 +81,9 @@ const templateCharCounter = document.getElementById('template-char-counter');
 const filterFromDate = document.getElementById('filter-from-date');
 const filterToDate = document.getElementById('filter-to-date');
 const btnClearDate = document.getElementById('btn-clear-date');
+
+// Selection / Bulk Actions DOM Elements
+const bulkSenderSelect = document.getElementById('bulk-sender-select');
 
 // 1. Initial Load & Setup
 window.addEventListener('DOMContentLoaded', () => {
@@ -205,6 +210,119 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   uploadLeadsForm.addEventListener('submit', handleUploadLeadsSubmit);
+
+  // Bulk messaging elements
+  const chkSelectAllConvs = document.getElementById('chk-select-all-convs');
+  const btnBulkMsg = document.getElementById('btn-bulk-msg');
+  const bulkMessageModal = document.getElementById('bulk-message-modal');
+  const bulkMessageClose = document.getElementById('bulk-message-close');
+  const bulkMessageForm = document.getElementById('bulk-message-form');
+  const bulkMessageText = document.getElementById('bulk-message-text');
+  const bulkCharCounter = document.getElementById('bulk-char-counter');
+  const btnSubmitBulk = document.getElementById('btn-submit-bulk');
+
+  // Select all checkbox handler
+  chkSelectAllConvs.addEventListener('change', (e) => {
+    const query = searchInput.value.toLowerCase().trim();
+    const filtered = conversations.filter(c => {
+      const name = (c.name || '').toLowerCase();
+      const phone = c.phone_number.toLowerCase();
+      const matchesSearch = name.includes(query) || phone.includes(query);
+      if (!matchesSearch) return false;
+
+      const hasReplies = c.last_inbound_at !== null;
+      if (currentFilter === 'replied' && !hasReplies) return false;
+      if (currentFilter === 'no-replies' && hasReplies) return false;
+
+      const activityDate = getLocalDateString(c.last_message_at || c.created_at);
+      if (activityDate) {
+        if (fromDate && activityDate < fromDate) return false;
+        if (toDate && activityDate > toDate) return false;
+      }
+      return true;
+    });
+
+    if (e.target.checked) {
+      filtered.forEach(c => selectedConversations.add(c.id));
+    } else {
+      filtered.forEach(c => selectedConversations.delete(c.id));
+    }
+    
+    // Re-render conversation checkboxes to show selected state
+    renderConversations();
+  });
+
+  // Open Bulk Message Modal
+  btnBulkMsg.addEventListener('click', () => {
+    if (selectedConversations.size === 0) return;
+    
+    document.getElementById('bulk-recipients-count').textContent = selectedConversations.size;
+    bulkMessageText.value = '';
+    updateCharCounter(bulkMessageText, bulkCharCounter);
+    
+    // Populate bulk sender options from active settings
+    const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
+      return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
+    }).join('');
+    bulkSenderSelect.innerHTML = composerOptions;
+
+    bulkMessageModal.classList.add('open');
+  });
+
+  // Close Bulk Message Modal
+  bulkMessageClose.addEventListener('click', () => bulkMessageModal.classList.remove('open'));
+  bulkMessageModal.addEventListener('click', (e) => {
+    if (e.target === bulkMessageModal) bulkMessageModal.classList.remove('open');
+  });
+
+  // Bulk Message Character Counter
+  bulkMessageText.addEventListener('input', function() {
+    updateCharCounter(this, bulkCharCounter);
+  });
+
+  // Submit Bulk Message Campaign
+  bulkMessageForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (selectedConversations.size === 0) return;
+
+    btnSubmitBulk.disabled = true;
+    btnSubmitBulk.textContent = 'Sending...';
+
+    const text = bulkMessageText.value.trim();
+    const fromNum = bulkSenderSelect.value;
+    const conversationIds = Array.from(selectedConversations);
+
+    try {
+      const res = await fetch('/api/conversations/bulk-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_ids: conversationIds,
+          message_text: text,
+          from_number: fromNum
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        bulkMessageModal.classList.remove('open');
+        alert(`Success! Queued ${data.queued_count} bulk messages.`);
+        
+        // Clear selection & reload
+        selectedConversations.clear();
+        await loadConversations();
+      } else {
+        const err = await res.json();
+        alert("Error sending bulk messages: " + err.error);
+      }
+    } catch (err) {
+      console.error("Bulk messaging submit error:", err);
+      alert("Connection error sending bulk messages.");
+    } finally {
+      btnSubmitBulk.disabled = false;
+      btnSubmitBulk.textContent = 'Send Message';
+    }
+  });
 });
 
 // 2. Load API Data
@@ -249,6 +367,11 @@ function updateSenderDropdowns(settings) {
   // Populate campaign sender select
   if (campaignSenderSelect) {
     campaignSenderSelect.innerHTML = options.map(renderOption).join('');
+  }
+
+  // Populate bulk sender select
+  if (bulkSenderSelect) {
+    bulkSenderSelect.innerHTML = options.map(renderOption).join('');
   }
 }
 
@@ -404,9 +527,11 @@ function handleIncomingMessageStatusUpdate(update) {
 // 5. Render Sidebar conversations
 function renderConversations() {
   const query = searchInput.value.toLowerCase().trim();
+  const convListHeader = document.getElementById('conv-list-header');
   
   if (conversations.length === 0) {
     conversationsList.innerHTML = `<div class="list-placeholder">No conversations started</div>`;
+    if (convListHeader) convListHeader.style.display = 'none';
     return;
   }
 
@@ -434,6 +559,16 @@ function renderConversations() {
     return true;
   });
 
+  // Update selection header
+  if (convListHeader) {
+    if (filtered.length > 0) {
+      convListHeader.style.display = 'flex';
+      document.getElementById('visible-convs-count').textContent = filtered.length;
+    } else {
+      convListHeader.style.display = 'none';
+    }
+  }
+
   if (filtered.length === 0) {
     conversationsList.innerHTML = `<div class="list-placeholder">No matches found</div>`;
     return;
@@ -456,8 +591,13 @@ function renderConversations() {
 
     const preview = c.last_message_text || 'No messages';
     const repliedDot = c.last_message_direction === 'inbound' ? `<span class="conv-replied-dot" title="New Reply"></span>` : '';
+    const isChecked = selectedConversations.has(c.id);
 
     item.innerHTML = `
+      <label class="conv-checkbox-container" onclick="event.stopPropagation()">
+        <input type="checkbox" class="conv-select-checkbox" data-id="${c.id}" ${isChecked ? 'checked' : ''}>
+        <span class="checkbox-custom"></span>
+      </label>
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
@@ -468,12 +608,26 @@ function renderConversations() {
       </div>
     `;
 
+    // Handle checkbox change
+    const checkbox = item.querySelector('.conv-select-checkbox');
+    checkbox.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        selectedConversations.add(c.id);
+      } else {
+        selectedConversations.delete(c.id);
+      }
+      updateBulkActionBarUI(filtered);
+    });
+
     item.addEventListener('click', () => selectConversation(c));
     conversationsList.appendChild(item);
   });
+
+  updateBulkActionBarUI(filtered);
 }
 
 function filterConversations() {
+  clearSelection();
   renderConversations();
 }
 
@@ -1026,5 +1180,34 @@ function formatMessageTimestamp(dateInput) {
     hour: '2-digit', 
     minute: '2-digit' 
   });
+}
+
+// Selection & Bulk Action Helpers
+function clearSelection() {
+  selectedConversations.clear();
+  const chkSelectAllConvs = document.getElementById('chk-select-all-convs');
+  if (chkSelectAllConvs) chkSelectAllConvs.checked = false;
+}
+
+function updateBulkActionBarUI(filteredList) {
+  const chkSelectAllConvs = document.getElementById('chk-select-all-convs');
+  const btnBulkMsg = document.getElementById('btn-bulk-msg');
+  if (!chkSelectAllConvs || !btnBulkMsg) return;
+
+  // Count visible checked items
+  let selectedVisibleCount = 0;
+  filteredList.forEach(c => {
+    if (selectedConversations.has(c.id)) selectedVisibleCount++;
+  });
+
+  chkSelectAllConvs.checked = filteredList.length > 0 && selectedVisibleCount === filteredList.length;
+  
+  if (selectedConversations.size > 0) {
+    btnBulkMsg.disabled = false;
+    btnBulkMsg.querySelector('span').textContent = `Message Selected (${selectedConversations.size})`;
+  } else {
+    btnBulkMsg.disabled = true;
+    btnBulkMsg.querySelector('span').textContent = 'Message Selected';
+  }
 }
 

@@ -183,6 +183,40 @@ app.post('/api/leads/upload', (req, res) => {
   }
 });
 
+// 4.6. Send Bulk Message to Selected Conversations
+app.post('/api/conversations/bulk-message', (req, res) => {
+  const { conversation_ids, message_text, from_number } = req.body;
+  if (!conversation_ids || !Array.isArray(conversation_ids)) {
+    return res.status(400).json({ error: 'conversation_ids array is required' });
+  }
+  if (!message_text) {
+    return res.status(400).json({ error: 'message_text is required' });
+  }
+
+  try {
+    const messages = db.sendBulkMessages(conversation_ids, message_text, from_number || null);
+    
+    // Broadcast new messages via WebSockets if any
+    if (messages.length > 0) {
+      messages.forEach(msg => {
+        broadcast('message_new', msg);
+      });
+      // Wake up queue worker
+      queueWorker.processNext();
+    }
+    
+    // Update queue stats on dashboard
+    broadcast('queue_status', db.getQueueStats());
+
+    res.json({
+      success: true,
+      queued_count: messages.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 5. Get current settings
 app.get('/api/settings', (req, res) => {
   try {

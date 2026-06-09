@@ -354,6 +354,57 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   return { conversations: insertedConvs, messages: insertedMessages };
 }
 
+function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
+  const settings = getSettings();
+  const fromNum = fromNumber || settings.sender_number || '+18887885527';
+  
+  const insertMessageStmt = db.prepare(`
+    INSERT INTO messages (
+      conversation_id, direction, from_number, to_number, body, status
+    ) VALUES (?, 'outbound', ?, ?, ?, 'queued')
+  `);
+  
+  const updateConvStmt = db.prepare(`
+    UPDATE conversations 
+    SET last_message_text = ?, last_message_at = datetime('now', 'localtime') 
+    WHERE id = ?
+  `);
+
+  const getConvStmt = db.prepare(`
+    SELECT * FROM conversations WHERE id = ?
+  `);
+
+  const insertedMessages = [];
+
+  const transaction = db.transaction((ids) => {
+    for (const id of ids) {
+      const conv = getConvStmt.get(id);
+      if (!conv) continue;
+
+      // Replace placeholders
+      let body = messageTemplate;
+      const nameVal = conv.name || '';
+      body = body.replace(/\[Name\]/gi, nameVal);
+      
+      const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
+      insertedMessages.push({
+        id: result.lastInsertRowid,
+        conversation_id: conv.id,
+        direction: 'outbound',
+        from_number: fromNum,
+        to_number: conv.phone_number,
+        body: body,
+        status: 'queued'
+      });
+      
+      updateConvStmt.run(body, conv.id);
+    }
+  });
+
+  transaction(conversationIds);
+  return insertedMessages;
+}
+
 function deleteConversation(id) {
   const deleteMsgs = db.prepare('DELETE FROM messages WHERE conversation_id = ?');
   const deleteConv = db.prepare('DELETE FROM conversations WHERE id = ?');
@@ -377,6 +428,7 @@ module.exports = {
   getNextQueuedMessage,
   getQueueStats,
   bulkImportLeads,
+  sendBulkMessages,
   deleteConversation
 };
 

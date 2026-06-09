@@ -59,6 +59,18 @@
         </div>
       </div>
       
+      <div class="conv-list-header" id="conv-list-header" style="display: none;">
+        <label class="select-all-container">
+          <input type="checkbox" id="chk-select-all-convs">
+          <span class="checkbox-custom"></span>
+          <span class="select-all-label">Select All (<span id="visible-convs-count">0</span>)</span>
+        </label>
+        <button type="button" id="btn-bulk-msg" class="btn-bulk-msg" title="Message Selected Contacts" disabled>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="bulk-send-icon"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          <span>Message Selected</span>
+        </button>
+      </div>
+
       <div class="conversations-list" id="conversations-list">
         <!-- Dynamic conversations will be inserted here -->
         <div class="list-placeholder">Loading conversations...</div>
@@ -277,6 +289,39 @@
         </div>
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-upload" disabled>Import & Queue</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Bulk Message Modal -->
+  <div class="modal" id="bulk-message-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Send Bulk Message</h2>
+        <button class="modal-close" id="bulk-message-close">&times;</button>
+      </div>
+      <form id="bulk-message-form">
+        <div class="bulk-recipients-preview">
+          Sending to <strong id="bulk-recipients-count">0</strong> selected contacts.
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="bulk-sender-select">Send Campaign From</label>
+          <select id="bulk-sender-select" class="sender-select" style="width: 100%;">
+            <!-- Dynamic options -->
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="bulk-message-text">Message Content</label>
+          <textarea id="bulk-message-text" placeholder="e.g. Hello [Name], this is Jimmy..." rows="4" required></textarea>
+          <div class="template-meta-row">
+            <div class="char-counter" id="bulk-char-counter">0 / 160 (1 segment)</div>
+            <small class="form-help">Use <strong>[Name]</strong> to dynamically insert the lead's name.</small>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary btn-block" id="btn-submit-bulk">Send Message</button>
       </form>
     </div>
   </div>
