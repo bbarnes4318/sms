@@ -1425,3 +1425,280 @@ body {
   transform: rotate(45deg);
 }
 
+/* Gateway Connection Status Cards */
+.connection-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: var(--transition-smooth);
+}
+
+.connection-card:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.connection-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.connection-name {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  display: inline-block;
+  position: relative;
+}
+
+.status-dot.active {
+  background-color: var(--success);
+}
+
+.status-dot.pulsing.active::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--success);
+  animation: pulse-dot 1.5s infinite ease-out;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.connection-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.02);
+  padding-top: 6px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.detail-label {
+  color: var(--text-muted);
+}
+
+.detail-value {
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.text-monospace {
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+
+/* Quick SMS Test Form */
+.quick-test-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+  overflow: hidden;
+  max-height: 400px;
+}
+
+.quick-test-form.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: transparent;
+  margin-top: 0;
+}
+
+.test-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.test-field-group label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.test-field-group input,
+.test-field-group select,
+.test-field-group textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-main);
+  font-size: 12px;
+  padding: 6px 8px;
+  font-family: var(--font-body);
+  transition: var(--transition-smooth);
+}
+
+.test-field-group input:focus,
+.test-field-group select:focus,
+.test-field-group textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 5px rgba(238, 118, 0, 0.15);
+}
+
+.btn-small {
+  padding: 6px 12px !important;
+  font-size: 11px !important;
+  height: auto !important;
+}
+
+.test-status-msg {
+  font-size: 11px;
+  text-align: center;
+  min-height: 14px;
+}
+
+.test-status-msg.success {
+  color: var(--success);
+}
+
+.test-status-msg.error {
+  color: var(--danger);
+}
+
+.btn-toggle-icon {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+}
+
+.btn-toggle-icon:hover {
+  color: var(--primary);
+}
+
+.btn-toggle-icon.collapsed svg {
+  transform: rotate(180deg);
+}
+
+/* Recent Activity Timeline */
+.timeline-container {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.timeline-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.timeline-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+}
+
+.activity-timeline {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-color);
+  margin-left: 6px;
+  gap: 16px;
+}
+
+.timeline-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: fadeInTimeline 0.3s ease-out;
+}
+
+@keyframes fadeInTimeline {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.timeline-badge {
+  position: absolute;
+  left: -18px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  border: 2px solid var(--bg-sidebar);
+  transition: var(--transition-smooth);
+}
+
+.timeline-item.queued .timeline-badge { background-color: var(--text-muted); }
+.timeline-item.sending .timeline-badge { background-color: var(--warning); }
+.timeline-item.sent .timeline-badge { background-color: var(--success); }
+.timeline-item.received .timeline-badge { background-color: var(--success); }
+.timeline-item.failed .timeline-badge { background-color: var(--danger); }
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.timeline-title {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.timeline-time {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.timeline-body {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.activity-empty-state {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px 0;
+  font-style: italic;
+}
+
+

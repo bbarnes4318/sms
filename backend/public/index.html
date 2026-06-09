@@ -134,7 +134,7 @@
       </footer>
     </main>
     
-    <!-- Right Panel: Queue Stats -->
+    <!-- Right Panel: NOC Monitoring Station -->
     <section class="dashboard-panel">
       <!-- Queue Stats -->
       <div class="panel-section">
@@ -161,6 +161,88 @@
           <div class="stat-card card-failed">
             <div class="stat-value" id="stat-failed">0</div>
             <div class="stat-label">Failed</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connections Status -->
+      <div class="panel-section connection-status-section">
+        <h3>Gateway Status</h3>
+        <div class="connection-card card-bulkvs">
+          <div class="connection-header-row">
+            <span class="connection-name">BulkVS Gateway</span>
+            <span class="status-dot pulsing active" id="conn-bulkvs-status"></span>
+          </div>
+          <div class="connection-details">
+            <div class="detail-row">
+              <span class="detail-label">Sender DID:</span>
+              <span class="detail-value text-monospace" id="conn-bulkvs-did">Loading...</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Send Pace:</span>
+              <span class="detail-value" id="conn-bulkvs-pace">2000 ms</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="connection-card card-fractel">
+          <div class="connection-header-row">
+            <span class="connection-name">FracTEL (FoneStorm)</span>
+            <span class="status-dot pulsing" id="conn-fractel-status"></span>
+          </div>
+          <div class="connection-details">
+            <div class="detail-row">
+              <span class="detail-label">Sender DID:</span>
+              <span class="detail-value text-monospace" id="conn-fractel-did">Loading...</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Brand ID:</span>
+              <span class="detail-value text-monospace" id="conn-fractel-brand">B7PS8UH</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Test SMS Tool -->
+      <div class="panel-section quick-test-section">
+        <div class="panel-header-row">
+          <h3>Quick SMS Test</h3>
+          <button type="button" id="btn-toggle-test" class="btn-toggle-icon" title="Toggle Test Tool">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
+          </button>
+        </div>
+        <form id="quick-test-form" class="quick-test-form">
+          <div class="test-field-group">
+            <label for="test-phone">Recipient Phone</label>
+            <input type="tel" id="test-phone" placeholder="e.g. +14075550192" required>
+          </div>
+          
+          <div class="test-field-group">
+            <label for="test-sender">Sender DID</label>
+            <select id="test-sender" class="test-select" required>
+              <!-- Populated from settings DIDs -->
+            </select>
+          </div>
+
+          <div class="test-field-group">
+            <label for="test-body">Message</label>
+            <textarea id="test-body" placeholder="Hello! Gateway test message." rows="2" required></textarea>
+          </div>
+
+          <button type="submit" class="btn-primary btn-block btn-small" id="btn-submit-test">
+            <span>Send Test SMS</span>
+          </button>
+          <div class="test-status-msg" id="test-status-msg"></div>
+        </form>
+      </div>
+
+      <!-- Recent Gateway Activity Timeline -->
+      <div class="panel-section gateway-activity-section">
+        <h3>Live Gateway Activity</h3>
+        <div class="timeline-container">
+          <div id="activity-timeline" class="activity-timeline">
+            <!-- Timeline events populated dynamically -->
+            <div class="activity-empty-state">No recent activity detected.</div>
           </div>
         </div>
       </div>

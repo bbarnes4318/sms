@@ -415,6 +415,26 @@ function deleteConversation(id) {
   return transaction(id);
 }
 
+function getRecentMessages(limit = 10) {
+  return db.prepare(`
+    SELECT 
+      m.id, 
+      m.conversation_id, 
+      m.direction, 
+      m.from_number, 
+      m.to_number, 
+      m.body, 
+      m.status, 
+      m.error_message,
+      m.created_at,
+      c.name as contact_name
+    FROM messages m
+    LEFT JOIN conversations c ON m.conversation_id = c.id
+    ORDER BY m.id DESC
+    LIMIT ?
+  `).all(limit);
+}
+
 module.exports = {
   db,
   initDatabase,
@@ -429,6 +449,7 @@ module.exports = {
   getQueueStats,
   bulkImportLeads,
   sendBulkMessages,
-  deleteConversation
+  deleteConversation,
+  getRecentMessages
 };
 

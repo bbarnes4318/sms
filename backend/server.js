@@ -227,6 +227,17 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
+// 5.5. Get recent queue activity messages
+app.get('/api/queue/recent', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const recent = db.getRecentMessages(limit);
+    res.json(recent);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function configureFractelWebhook(settings, hostUrl) {
   const username = settings.fractel_username;
   const password = settings.fractel_password;

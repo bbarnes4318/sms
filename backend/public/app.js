@@ -89,6 +89,7 @@ const bulkSenderSelect = document.getElementById('bulk-sender-select');
 window.addEventListener('DOMContentLoaded', () => {
   loadConversations();
   loadSettings();
+  loadRecentActivity();
   setupWebSockets();
   
   // Set webhook URL based on current host
@@ -156,6 +157,97 @@ window.addEventListener('DOMContentLoaded', () => {
       }, 2000);
     });
   });
+
+  // Toggle Test Tool
+  const btnToggleTest = document.getElementById('btn-toggle-test');
+  const quickTestForm = document.getElementById('quick-test-form');
+  if (btnToggleTest && quickTestForm) {
+    btnToggleTest.addEventListener('click', () => {
+      quickTestForm.classList.toggle('collapsed');
+      btnToggleTest.classList.toggle('collapsed');
+    });
+  }
+
+  // Quick SMS Test Form submission
+  if (quickTestForm) {
+    quickTestForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const phoneInput = document.getElementById('test-phone');
+      const senderSelect = document.getElementById('test-sender');
+      const bodyInput = document.getElementById('test-body');
+      const statusMsg = document.getElementById('test-status-msg');
+      const btnSubmit = document.getElementById('btn-submit-test');
+
+      if (!phoneInput || !bodyInput) return;
+
+      const phone = phoneInput.value.trim();
+      const body = bodyInput.value.trim();
+      const fromNum = senderSelect ? senderSelect.value : null;
+
+      if (!phone || !body) return;
+
+      // Disable button
+      btnSubmit.disabled = true;
+      statusMsg.textContent = 'Sending connection test...';
+      statusMsg.className = 'test-status-msg';
+
+      try {
+        // 1. Create or get conversation
+        const convRes = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone_number: phone })
+        });
+
+        if (!convRes.ok) {
+          const err = await convRes.json();
+          throw new Error(err.error || "Failed to create conversation");
+        }
+
+        const conv = await convRes.json();
+
+        // 2. Send the message
+        const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            body: body,
+            from_number: fromNum
+          })
+        });
+
+        if (!msgRes.ok) {
+          const err = await msgRes.json();
+          throw new Error(err.error || "Failed to queue message");
+        }
+
+        // Success!
+        statusMsg.textContent = 'SMS queued successfully!';
+        statusMsg.className = 'test-status-msg success';
+        
+        // Reset message body only
+        bodyInput.value = '';
+        
+        // Reload conversations and activity
+        loadConversations();
+        loadRecentActivity();
+
+        // Clear status after 3 seconds
+        setTimeout(() => {
+          statusMsg.textContent = '';
+          statusMsg.className = 'test-status-msg';
+        }, 3000);
+
+      } catch (err) {
+        console.error("Test SMS failed:", err);
+        statusMsg.textContent = err.message || "Test SMS failed.";
+        statusMsg.className = 'test-status-msg error';
+      } finally {
+        btnSubmit.disabled = false;
+      }
+    });
+  }
 
   // Textarea auto-resize & character count
   messageInput.addEventListener('input', function() {
@@ -390,6 +482,15 @@ function updateSenderDropdowns(settings) {
   if (bulkSenderSelect) {
     bulkSenderSelect.innerHTML = options.map(renderOption).join('');
   }
+
+  // Populate test sender select
+  const testSenderSelect = document.getElementById('test-sender');
+  if (testSenderSelect) {
+    testSenderSelect.innerHTML = options.map(renderOption).join('');
+  }
+
+  // Update connection cards status in right panel
+  updateGatewayStatusUI(settings);
 }
 
 async function loadSettings() {
@@ -495,6 +596,9 @@ function updateQueueStatsUI(stats) {
   } else {
     statSending.classList.remove('animate-pulse');
   }
+  
+  // Update NOC timeline activity
+  loadRecentActivity();
 }
 
 // Handle Inbound or New Outbound message websocket push
@@ -508,6 +612,8 @@ function handleIncomingNewMessage(msg) {
   
   // Reload conversation list to show correct preview
   loadConversations();
+  // Update NOC timeline activity
+  loadRecentActivity();
 }
 
 // Handle message status transition (queued -> sending -> sent/failed)
@@ -539,6 +645,8 @@ function handleIncomingMessageStatusUpdate(update) {
   
   // Reload conversations side bar preview
   loadConversations();
+  // Update NOC timeline activity
+  loadRecentActivity();
 }
 
 // 5. Render Sidebar conversations
@@ -1226,5 +1334,103 @@ function updateBulkActionBarUI(filteredList) {
     btnBulkMsg.disabled = true;
     btnBulkMsg.querySelector('span').textContent = 'Message Selected';
   }
+}
+
+// Right Panel NOC Station Helpers
+function updateGatewayStatusUI(settings) {
+  const connBulkvsDid = document.getElementById('conn-bulkvs-did');
+  const connBulkvsPace = document.getElementById('conn-bulkvs-pace');
+  const connFractelDid = document.getElementById('conn-fractel-did');
+  const connFractelBrand = document.getElementById('conn-fractel-brand');
+  const connBulkvsStatus = document.getElementById('conn-bulkvs-status');
+  const connFractelStatus = document.getElementById('conn-fractel-status');
+
+  if (connBulkvsDid) connBulkvsDid.textContent = settings.sender_number || 'Not Set';
+  if (connBulkvsPace) connBulkvsPace.textContent = `${settings.send_interval_ms || 2000} ms`;
+  if (connFractelDid) connFractelDid.textContent = settings.fractel_sender_number || 'Not Set';
+  if (connFractelBrand) connFractelBrand.textContent = settings.fractel_brand_id || 'Not Set';
+
+  // Toggle active dots based on credentials configuration
+  if (connBulkvsStatus) {
+    if (settings.bulkvs_username && settings.bulkvs_token) {
+      connBulkvsStatus.classList.add('active');
+    } else {
+      connBulkvsStatus.classList.remove('active');
+    }
+  }
+
+  if (connFractelStatus) {
+    if (settings.fractel_username && settings.fractel_password) {
+      connFractelStatus.classList.add('active');
+    } else {
+      connFractelStatus.classList.remove('active');
+    }
+  }
+}
+
+async function loadRecentActivity() {
+  const activityTimeline = document.getElementById('activity-timeline');
+  if (!activityTimeline) return;
+
+  try {
+    const res = await fetch('/api/queue/recent?limit=10');
+    if (!res.ok) throw new Error("Failed to fetch recent queue activity");
+    const messages = await res.json();
+
+    if (messages.length === 0) {
+      activityTimeline.innerHTML = '<div class="activity-empty-state">No recent activity detected.</div>';
+      return;
+    }
+
+    activityTimeline.innerHTML = messages.map(msg => renderTimelineItem(msg)).join('');
+  } catch (err) {
+    console.error("Error loading recent activity:", err);
+  }
+}
+
+function renderTimelineItem(msg) {
+  let title = '';
+  const directionStr = msg.direction === 'inbound' ? 'Inbound' : 'Outbound';
+  const nameOrPhone = msg.contact_name || (msg.direction === 'inbound' ? msg.from_number : msg.to_number);
+  
+  if (msg.direction === 'inbound') {
+    title = `Inbound from ${nameOrPhone}`;
+  } else {
+    title = `Outbound to ${nameOrPhone}`;
+  }
+
+  const timeAgoStr = formatRelativeTime(msg.created_at);
+  const bodyText = msg.body || (msg.media_urls ? '[Attachment]' : '');
+  const statusClass = msg.direction === 'inbound' ? 'received' : msg.status;
+  const statusLabel = msg.direction === 'inbound' ? 'received' : msg.status;
+
+  return `
+    <div class="timeline-item ${statusClass}" data-activity-id="${msg.id}">
+      <div class="timeline-badge"></div>
+      <div class="timeline-header">
+        <span class="timeline-title">${title}</span>
+        <span class="timeline-time">${timeAgoStr}</span>
+      </div>
+      <div class="timeline-body" title="${bodyText} (${statusLabel})">${bodyText}</div>
+    </div>
+  `;
+}
+
+// Simple time ago formatter
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return '';
+  const cleanDateStr = dateStr.replace(' ', 'T');
+  const date = new Date(cleanDateStr);
+  if (isNaN(date.getTime())) return dateStr;
+
+  const seconds = Math.floor((new Date() - date) / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
