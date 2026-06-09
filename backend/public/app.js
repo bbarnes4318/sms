@@ -9,6 +9,7 @@ let currentFilter = 'replied'; // Phase 6: Default view is 'replied'
 let fromDate = '';
 let toDate = '';
 let selectedConversations = new Set(); // Selection/Bulk Actions state
+let bulkSelectMode = false; // Toggle multi-select checkbox mode
 
 
 // DOM Elements
@@ -165,6 +166,19 @@ window.addEventListener('DOMContentLoaded', () => {
     btnToggleTest.addEventListener('click', () => {
       quickTestForm.classList.toggle('collapsed');
       btnToggleTest.classList.toggle('collapsed');
+    });
+  }
+
+  // Toggle Bulk Messaging Mode
+  const btnToggleBulkMode = document.getElementById('btn-toggle-bulk-mode');
+  const sidebarEl = document.querySelector('.sidebar');
+  if (btnToggleBulkMode && sidebarEl) {
+    btnToggleBulkMode.addEventListener('click', () => {
+      bulkSelectMode = !bulkSelectMode;
+      btnToggleBulkMode.classList.toggle('active', bulkSelectMode);
+      sidebarEl.classList.toggle('bulk-mode', bulkSelectMode);
+      clearSelection();
+      renderConversations();
     });
   }
 
@@ -686,7 +700,7 @@ function renderConversations() {
 
   // Update selection header
   if (convListHeader) {
-    if (filtered.length > 0) {
+    if (filtered.length > 0 && bulkSelectMode) {
       convListHeader.style.display = 'flex';
       document.getElementById('visible-convs-count').textContent = filtered.length;
     } else {
