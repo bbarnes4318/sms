@@ -145,13 +145,63 @@ body {
   transform: translateY(0);
 }
 
-/* Action Sidebar Buttons */
-.sidebar-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+/* Action Sidebar Buttons & Search Row */
+.sidebar-search-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
   width: 100%;
   margin-top: 4px;
+}
+
+.sidebar-search-row .search-box {
+  flex: 1;
+}
+
+.btn-icon-only {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.btn-icon-only.btn-primary {
+  background: var(--primary-gradient);
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+
+.btn-icon-only.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--primary-glow);
+  filter: brightness(1.05);
+}
+
+.btn-icon-only.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-icon-only.btn-accent {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+
+.btn-icon-only.btn-accent:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
+}
+
+.btn-icon-only.btn-accent:active {
+  transform: translateY(0);
 }
 
 /* Primary Button Styling */

@@ -24,22 +24,17 @@
             <span>Storm Map</span>
           </a>
         </div>
-        <div class="sidebar-actions">
-          <button id="btn-new-chat" class="btn-primary" title="Start New Conversation">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            <span>New Chat</span>
+        <div class="sidebar-search-row">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="search-input" placeholder="Search chats...">
+          </div>
+          <button id="btn-new-chat" class="btn-primary btn-icon-only" title="Start New Conversation">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
-          <button id="btn-upload-leads" class="btn-accent" title="Bulk Upload Leads">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            <span>Upload Leads</span>
+          <button id="btn-upload-leads" class="btn-accent btn-icon-only" title="Bulk Upload Leads">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
           </button>
-        </div>
-      </div>
-      
-      <div class="search-box-container">
-        <div class="search-box">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="search-input" placeholder="Search conversations...">
         </div>
       </div>
       
@@ -169,43 +164,6 @@
         </div>
       </div>
 
-      <!-- Connections Status -->
-      <div class="panel-section connection-status-section">
-        <h3>Gateway Status</h3>
-        <div class="connection-card card-bulkvs">
-          <div class="connection-header-row">
-            <span class="connection-name">BulkVS Gateway</span>
-            <span class="status-dot pulsing active" id="conn-bulkvs-status"></span>
-          </div>
-          <div class="connection-details">
-            <div class="detail-row">
-              <span class="detail-label">Sender DID:</span>
-              <span class="detail-value text-monospace" id="conn-bulkvs-did">Loading...</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Send Pace:</span>
-              <span class="detail-value" id="conn-bulkvs-pace">2000 ms</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="connection-card card-fractel">
-          <div class="connection-header-row">
-            <span class="connection-name">FracTEL (FoneStorm)</span>
-            <span class="status-dot pulsing" id="conn-fractel-status"></span>
-          </div>
-          <div class="connection-details">
-            <div class="detail-row">
-              <span class="detail-label">Sender DID:</span>
-              <span class="detail-value text-monospace" id="conn-fractel-did">Loading...</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Brand ID:</span>
-              <span class="detail-value text-monospace" id="conn-fractel-brand">B7PS8UH</span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- Quick Test SMS Tool -->
       <div class="panel-section quick-test-section">
