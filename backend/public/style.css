@@ -204,6 +204,79 @@ body {
   transform: translateY(0);
 }
 
+/* Expandable Icon Buttons next to search */
+.btn-expandable {
+  height: 36px;
+  max-width: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 10px;
+  flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden;
+  transition: max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), gap 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s;
+  gap: 0;
+}
+
+.btn-expandable svg {
+  flex-shrink: 0;
+}
+
+.btn-expandable .btn-label {
+  opacity: 0;
+  white-space: nowrap;
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.btn-expandable:hover {
+  max-width: 150px;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.btn-expandable:hover .btn-label {
+  opacity: 1;
+}
+
+.btn-expandable.btn-primary {
+  background: var(--primary-gradient);
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+
+.btn-expandable.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--primary-glow);
+  filter: brightness(1.05);
+}
+
+.btn-expandable.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-expandable.btn-accent {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+
+.btn-expandable.btn-accent:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
+}
+
+.btn-expandable.btn-accent:active {
+  transform: translateY(0);
+}
+
 /* Primary Button Styling */
 .btn-primary {
   background: var(--primary-gradient);
