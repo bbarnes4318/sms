@@ -217,6 +217,55 @@ app.post('/api/conversations/bulk-message', (req, res) => {
   }
 });
 
+// 4.7. Send Bulk Message to Specific Stages (Campaigns)
+app.post('/api/campaigns', (req, res) => {
+  const { stages, message_text, from_number } = req.body;
+  if (!stages || !Array.isArray(stages) || stages.length === 0) {
+    return res.status(400).json({ error: 'stages array is required' });
+  }
+  if (!message_text) {
+    return res.status(400).json({ error: 'message_text is required' });
+  }
+
+  try {
+    // Find all conversations in target stages
+    const placeholders = stages.map(() => '?').join(',');
+    const conversations = db.db.prepare(`
+      SELECT id FROM conversations WHERE stage IN (${placeholders})
+    `).all(...stages);
+
+    const conversationIds = conversations.map(c => c.id);
+    if (conversationIds.length === 0) {
+      return res.json({
+        success: true,
+        queued_count: 0,
+        message: 'No contacts found in selected stages.'
+      });
+    }
+
+    const messages = db.sendBulkMessages(conversationIds, message_text, from_number || null);
+    
+    // Broadcast new messages via WebSockets if any
+    if (messages.length > 0) {
+      messages.forEach(msg => {
+        broadcast('message_new', msg);
+      });
+      // Wake up queue worker
+      queueWorker.processNext();
+    }
+    
+    // Update queue stats on dashboard
+    broadcast('queue_status', db.getQueueStats());
+
+    res.json({
+      success: true,
+      queued_count: messages.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 5. Get current settings
 app.get('/api/settings', (req, res) => {
   try {

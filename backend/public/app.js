@@ -5,7 +5,8 @@ let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
 let parsedLeads = []; // Phase 2: Parsed leads storage
-let currentFilter = 'replied'; // Phase 6: Default view is 'replied'
+let currentStatusFilter = 'responded'; // Status filter (responded/pending)
+let currentStageFilter = 'all'; // Stage filter (Stage 1/Stage 2/Stage 3/all)
 let fromDate = '';
 let toDate = '';
 let selectedConversations = new Set(); // Selection/Bulk Actions state
@@ -44,6 +45,16 @@ const settingFractelUsername = document.getElementById('setting-fractel-username
 const settingFractelPassword = document.getElementById('setting-fractel-password');
 const composerSenderSelect = document.getElementById('composer-sender-select');
 const campaignSenderSelect = document.getElementById('campaign-sender-select');
+
+// Campaign Modal DOM Elements
+const btnSendCampaign = document.getElementById('btn-send-campaign');
+const campaignModal = document.getElementById('campaign-modal');
+const campaignClose = document.getElementById('campaign-close');
+const campaignForm = document.getElementById('campaign-form');
+const campaignMessageText = document.getElementById('campaign-message-text');
+const campaignCharCounter = document.getElementById('campaign-char-counter');
+const btnSubmitCampaign = document.getElementById('btn-submit-campaign');
+const campaignBulkSenderSelect = document.getElementById('campaign-bulk-sender-select');
 
 // Stats Elements
 const statQueued = document.getElementById('stat-queued');
@@ -100,12 +111,22 @@ window.addEventListener('DOMContentLoaded', () => {
   // Event Listeners
   searchInput.addEventListener('input', filterConversations);
 
-  // Phase 6: View Filters click handlers
-  document.querySelectorAll('.filter-pill').forEach(pill => {
+  // Status Filters click handlers
+  document.querySelectorAll('.status-pill').forEach(pill => {
     pill.addEventListener('click', (e) => {
-      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.status-pill').forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
-      currentFilter = pill.dataset.filter;
+      currentStatusFilter = pill.dataset.status;
+      filterConversations();
+    });
+  });
+
+  // Stage Filters click handlers
+  document.querySelectorAll('.stage-pill').forEach(pill => {
+    pill.addEventListener('click', (e) => {
+      document.querySelectorAll('.stage-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentStageFilter = pill.dataset.stage;
       filterConversations();
     });
   });
@@ -332,24 +353,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Select all checkbox handler
   chkSelectAllConvs.addEventListener('change', (e) => {
-    const query = searchInput.value.toLowerCase().trim();
-    const filtered = conversations.filter(c => {
-      const name = (c.name || '').toLowerCase();
-      const phone = c.phone_number.toLowerCase();
-      const matchesSearch = name.includes(query) || phone.includes(query);
-      if (!matchesSearch) return false;
-
-      const hasReplies = c.last_inbound_at !== null;
-      if (currentFilter === 'replied' && !hasReplies) return false;
-      if (currentFilter === 'no-replies' && hasReplies) return false;
-
-      const activityDate = getLocalDateString(c.last_message_at || c.created_at);
-      if (activityDate) {
-        if (fromDate && activityDate < fromDate) return false;
-        if (toDate && activityDate > toDate) return false;
-      }
-      return true;
-    });
+    const filtered = getFilteredConversations();
 
     if (e.target.checked) {
       filtered.forEach(c => selectedConversations.add(c.id));
@@ -432,6 +436,92 @@ window.addEventListener('DOMContentLoaded', () => {
       btnSubmitBulk.textContent = 'Send Message';
     }
   });
+
+  // Campaign Modal event listeners
+  if (btnSendCampaign) {
+    btnSendCampaign.addEventListener('click', () => {
+      // Clear checkboxes by default or select Stage 1
+      document.querySelectorAll('input[name="target-stage"]').forEach(chk => {
+        chk.checked = (chk.value === 'Stage 1');
+      });
+      campaignMessageText.value = '';
+      updateCharCounter(campaignMessageText, campaignCharCounter);
+
+      // Populate campaign bulk sender options
+      const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
+        return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
+      }).join('');
+      campaignBulkSenderSelect.innerHTML = composerOptions;
+
+      campaignModal.classList.add('open');
+    });
+  }
+
+  if (campaignClose) {
+    campaignClose.addEventListener('click', () => campaignModal.classList.remove('open'));
+  }
+  
+  if (campaignModal) {
+    campaignModal.addEventListener('click', (e) => {
+      if (e.target === campaignModal) campaignModal.classList.remove('open');
+    });
+  }
+
+  // Campaign Message Character Counter
+  if (campaignMessageText) {
+    campaignMessageText.addEventListener('input', function() {
+      updateCharCounter(this, campaignCharCounter);
+    });
+  }
+
+  // Campaign Form Submission
+  if (campaignForm) {
+    campaignForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const checkedStages = Array.from(document.querySelectorAll('input[name="target-stage"]:checked')).map(chk => chk.value);
+      if (checkedStages.length === 0) {
+        alert("Please select at least one target stage.");
+        return;
+      }
+
+      btnSubmitCampaign.disabled = true;
+      btnSubmitCampaign.textContent = 'Sending...';
+
+      const text = campaignMessageText.value.trim();
+      const fromNum = campaignBulkSenderSelect.value;
+
+      try {
+        const res = await fetch('/api/campaigns', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stages: checkedStages,
+            message_text: text,
+            from_number: fromNum
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          campaignModal.classList.remove('open');
+          alert(`Success! Queued ${data.queued_count} campaign messages.`);
+          
+          // Reload conversations
+          await loadConversations();
+        } else {
+          const err = await res.json();
+          alert("Error sending campaign: " + err.error);
+        }
+      } catch (err) {
+        console.error("Campaign submit error:", err);
+        alert("Connection error sending campaign.");
+      } finally {
+        btnSubmitCampaign.disabled = false;
+        btnSubmitCampaign.textContent = 'Send Campaign';
+      }
+    });
+  }
 });
 
 // 2. Load API Data
@@ -476,6 +566,11 @@ function updateSenderDropdowns(settings) {
   // Populate campaign sender select
   if (campaignSenderSelect) {
     campaignSenderSelect.innerHTML = options.map(renderOption).join('');
+  }
+
+  // Populate campaign bulk sender select
+  if (campaignBulkSenderSelect) {
+    campaignBulkSenderSelect.innerHTML = options.map(renderOption).join('');
   }
 
   // Populate bulk sender select
@@ -649,9 +744,39 @@ function handleIncomingMessageStatusUpdate(update) {
   loadRecentActivity();
 }
 
+function getFilteredConversations() {
+  const query = searchInput.value.toLowerCase().trim();
+  return conversations.filter(c => {
+    // 1. Search query filter
+    const name = (c.name || '').toLowerCase();
+    const phone = c.phone_number.toLowerCase();
+    const matchesSearch = name.includes(query) || phone.includes(query);
+    if (!matchesSearch) return false;
+
+    // 2. Status & Stage Filters
+    const isResponded = c.stage && c.stage.endsWith('-Responded');
+    const status = isResponded ? 'responded' : 'pending';
+    
+    if (currentStatusFilter !== status) return false;
+    
+    if (currentStageFilter !== 'all') {
+      const stageBase = c.stage.replace('-Responded', '');
+      if (stageBase !== currentStageFilter) return false;
+    }
+
+    // 3. Date Range Filter
+    const activityDate = getLocalDateString(c.last_message_at || c.created_at);
+    if (activityDate) {
+      if (fromDate && activityDate < fromDate) return false;
+      if (toDate && activityDate > toDate) return false;
+    }
+
+    return true;
+  });
+}
+
 // 5. Render Sidebar conversations
 function renderConversations() {
-  const query = searchInput.value.toLowerCase().trim();
   const convListHeader = document.getElementById('conv-list-header');
   
   if (conversations.length === 0) {
@@ -662,27 +787,7 @@ function renderConversations() {
 
   conversationsList.innerHTML = '';
   
-  const filtered = conversations.filter(c => {
-    // 1. Search query filter
-    const name = (c.name || '').toLowerCase();
-    const phone = c.phone_number.toLowerCase();
-    const matchesSearch = name.includes(query) || phone.includes(query);
-    if (!matchesSearch) return false;
-
-    // 2. Response Status Filter (Phase 6)
-    const hasReplies = c.last_inbound_at !== null;
-    if (currentFilter === 'replied' && !hasReplies) return false;
-    if (currentFilter === 'no-replies' && hasReplies) return false;
-
-    // 3. Date Range Filter (Phase 6)
-    const activityDate = getLocalDateString(c.last_message_at || c.created_at);
-    if (activityDate) {
-      if (fromDate && activityDate < fromDate) return false;
-      if (toDate && activityDate > toDate) return false;
-    }
-
-    return true;
-  });
+  const filtered = getFilteredConversations();
 
   // Update selection header
   if (convListHeader) {

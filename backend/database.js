@@ -19,6 +19,7 @@ function initDatabase() {
       name TEXT,
       last_message_text TEXT,
       last_message_at TEXT,
+      stage TEXT DEFAULT 'Stage 1',
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     )
   `).run();
@@ -51,6 +52,7 @@ function initDatabase() {
 
   // Create indexes
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone_number)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`).run();
 
@@ -65,6 +67,15 @@ function initDatabase() {
   insertSetting.run('fractel_sender_number', '8653456051');
   insertSetting.run('fractel_brand_id', 'B7PS8UH');
   insertSetting.run('fractel_enabled_dids', '3212372724,3215777735,3215777754,4072049626,4244204981,6283888618,6894658835,7272865079,7272882904,8653456051');
+
+  // Migration: Add stage column if not exists
+  const tableInfo = db.prepare("PRAGMA table_info(conversations)").all();
+  const hasStage = tableInfo.some(column => column.name === 'stage');
+  if (!hasStage) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN stage TEXT DEFAULT 'Stage 1'").run();
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)").run();
+    console.log("Database migration: Added 'stage' column to conversations table.");
+  }
 
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
@@ -248,6 +259,40 @@ function insertMessage(msg) {
     WHERE id = ?
   `).run(msg.body || (msg.media_urls ? '[Attachment]' : ''), msg.conversation_id);
 
+  // Auto-transition to responded substage if inbound reply
+  if (msg.direction === 'inbound') {
+    const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
+    if (conv) {
+      let newStage = conv.stage;
+      if (conv.stage === 'Stage 1') newStage = 'Stage 1-Responded';
+      else if (conv.stage === 'Stage 2') newStage = 'Stage 2-Responded';
+      else if (conv.stage === 'Stage 3') newStage = 'Stage 3-Responded';
+      
+      if (newStage !== conv.stage) {
+        db.prepare('UPDATE conversations SET stage = ? WHERE id = ?').run(newStage, msg.conversation_id);
+      }
+    }
+  }
+
+  // Auto-transition if manual outbound message sent directly
+  if (msg.direction === 'outbound') {
+    const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
+    if (conv && ['Stage 1', 'Stage 2', 'Stage 3'].includes(conv.stage)) {
+      const outboundCount = db.prepare(`
+        SELECT COUNT(*) as count FROM messages 
+        WHERE conversation_id = ? AND direction = 'outbound' AND status = 'sent'
+      `).get(msg.conversation_id).count;
+
+      let newStage = 'Stage 1';
+      if (outboundCount === 1) newStage = 'Stage 2';
+      else if (outboundCount >= 2) newStage = 'Stage 3';
+
+      if (newStage !== conv.stage) {
+        db.prepare('UPDATE conversations SET stage = ? WHERE id = ?').run(newStage, msg.conversation_id);
+      }
+    }
+  }
+
   return inserted;
 }
 
@@ -258,6 +303,26 @@ function updateMessageStatus(id, status, refId = null, errorMessage = null) {
       SET status = ?, ref_id = ?, sent_at = datetime('now', 'localtime')
       WHERE id = ?
     `).run(status, refId, id);
+
+    // Update conversation stage if outbound
+    const msg = db.prepare('SELECT conversation_id, direction FROM messages WHERE id = ?').get(id);
+    if (msg && msg.direction === 'outbound') {
+      const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
+      if (conv && ['Stage 1', 'Stage 2', 'Stage 3'].includes(conv.stage)) {
+        const outboundCount = db.prepare(`
+          SELECT COUNT(*) as count FROM messages 
+          WHERE conversation_id = ? AND direction = 'outbound' AND status = 'sent'
+        `).get(msg.conversation_id).count;
+
+        let newStage = 'Stage 1';
+        if (outboundCount === 2) newStage = 'Stage 2';
+        else if (outboundCount >= 3) newStage = 'Stage 3';
+
+        if (newStage !== conv.stage) {
+          db.prepare('UPDATE conversations SET stage = ? WHERE id = ?').run(newStage, msg.conversation_id);
+        }
+      }
+    }
   } else if (status === 'failed') {
     db.prepare(`
       UPDATE messages 
@@ -314,7 +379,7 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   
   const updateConvStmt = db.prepare(`
     UPDATE conversations 
-    SET last_message_text = ?, last_message_at = datetime('now', 'localtime') 
+    SET last_message_text = ?, last_message_at = datetime('now', 'localtime'), stage = 'Stage 1'
     WHERE id = ?
   `);
 
@@ -327,6 +392,9 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
       
       const conv = getOrCreateConversation(lead.phone_number, lead.name);
       insertedConvs.push(conv);
+
+      // Reset stage to Stage 1 upon re-import/new import
+      db.prepare("UPDATE conversations SET stage = 'Stage 1' WHERE id = ?").run(conv.id);
 
       if (messageTemplate) {
         // Replace placeholders
@@ -370,6 +438,12 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
     WHERE id = ?
   `);
 
+  const updateConvStageStmt = db.prepare(`
+    UPDATE conversations 
+    SET stage = ? 
+    WHERE id = ?
+  `);
+
   const getConvStmt = db.prepare(`
     SELECT * FROM conversations WHERE id = ?
   `);
@@ -380,6 +454,18 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
     for (const id of ids) {
       const conv = getConvStmt.get(id);
       if (!conv) continue;
+
+      // Calculate next stage for follow-up message
+      const outboundCount = db.prepare(`
+        SELECT COUNT(*) as count FROM messages 
+        WHERE conversation_id = ? AND direction = 'outbound' AND status = 'sent'
+      `).get(conv.id).count;
+
+      let nextStage = 'Stage 1';
+      if (outboundCount === 1) nextStage = 'Stage 2';
+      else if (outboundCount >= 2) nextStage = 'Stage 3';
+
+      updateConvStageStmt.run(nextStage, conv.id);
 
       // Replace placeholders
       let body = messageTemplate;

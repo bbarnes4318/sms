@@ -326,7 +326,8 @@ body {
   margin-bottom: 12px;
 }
 
-.view-filters {
+.status-filters,
+.stage-filters {
   display: flex;
   background: var(--bg-input);
   padding: 3px;
@@ -334,7 +335,8 @@ body {
   border: 1px solid var(--border-color);
 }
 
-.filter-pill {
+.status-pill,
+.stage-pill {
   flex: 1;
   background: transparent;
   color: var(--text-muted);
@@ -349,11 +351,13 @@ body {
   transition: var(--transition-smooth);
 }
 
-.filter-pill:hover {
+.status-pill:hover,
+.stage-pill:hover {
   color: var(--text-main);
 }
 
-.filter-pill.active {
+.status-pill.active,
+.stage-pill.active {
   background: var(--primary-gradient);
   color: #fff;
   box-shadow: 0 1px 4px rgba(238, 118, 0, 0.2);
@@ -1372,8 +1376,21 @@ body {
   color: var(--text-muted);
 }
 
+.checkbox-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .select-all-container input[type="checkbox"],
-.conv-checkbox-container input[type="checkbox"] {
+.conv-checkbox-container input[type="checkbox"],
+.checkbox-container input[type="checkbox"] {
   display: none;
 }
 
@@ -1390,13 +1407,15 @@ body {
 }
 
 .select-all-container input[type="checkbox"]:checked ~ .checkbox-custom,
-.conv-checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom {
+.conv-checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom,
+.checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom {
   background: var(--primary);
   border-color: transparent;
 }
 
 .select-all-container input[type="checkbox"]:checked ~ .checkbox-custom::after,
-.conv-checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom::after {
+.conv-checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom::after,
+.checkbox-container input[type="checkbox"]:checked ~ .checkbox-custom::after {
   content: '';
   position: absolute;
   left: 5px;

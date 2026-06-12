@@ -35,15 +35,25 @@
           <button id="btn-upload-leads" class="btn-accent btn-icon-only" title="Bulk Upload Leads">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
           </button>
+          <button id="btn-send-campaign" class="btn-accent btn-icon-only" title="Send Stage Campaign">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+          </button>
         </div>
       </div>
       
       <!-- Filters Container -->
       <div class="filters-container">
-        <div class="view-filters">
-          <button type="button" class="filter-pill active" data-filter="replied">Replied</button>
-          <button type="button" class="filter-pill" data-filter="all">All</button>
-          <button type="button" class="filter-pill" data-filter="no-replies">No Replies</button>
+        <!-- Tier 1: Status Filters -->
+        <div class="status-filters">
+          <button type="button" class="status-pill active" data-status="responded">Responded</button>
+          <button type="button" class="status-pill" data-status="pending">Pending</button>
+        </div>
+        <!-- Tier 2: Stage Filters -->
+        <div class="stage-filters">
+          <button type="button" class="stage-pill active" data-stage="all">All</button>
+          <button type="button" class="stage-pill" data-stage="Stage 1">Stage 1</button>
+          <button type="button" class="stage-pill" data-stage="Stage 2">Stage 2</button>
+          <button type="button" class="stage-pill" data-stage="Stage 3">Stage 3</button>
         </div>
         <div class="date-filters">
           <div class="date-input-group">
@@ -378,6 +388,56 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Stage Campaign Modal -->
+  <div class="modal" id="campaign-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Send Stage Campaign</h2>
+        <button class="modal-close" id="campaign-close">&times;</button>
+      </div>
+      <form id="campaign-form">
+        <div class="form-group">
+          <label>Target Stages (Pending Only)</label>
+          <div class="stage-checkboxes-group" style="display: flex; gap: 16px; margin-top: 8px;">
+            <label class="checkbox-container">
+              <input type="checkbox" name="target-stage" value="Stage 1" checked>
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-label">Stage 1</span>
+            </label>
+            <label class="checkbox-container">
+              <input type="checkbox" name="target-stage" value="Stage 2">
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-label">Stage 2</span>
+            </label>
+            <label class="checkbox-container">
+              <input type="checkbox" name="target-stage" value="Stage 3">
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-label">Stage 3</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="campaign-bulk-sender-select">Send Campaign From</label>
+          <select id="campaign-bulk-sender-select" class="sender-select" style="width: 100%;">
+            <!-- Dynamic options -->
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label for="campaign-message-text">Message Template</label>
+          <textarea id="campaign-message-text" placeholder="e.g. Hello [Name], this is Jimmy..." rows="4" required></textarea>
+          <div class="template-meta-row">
+            <div class="char-counter" id="campaign-char-counter">0 / 160 (1 segment)</div>
+            <small class="form-help">Use <strong>[Name]</strong> to dynamically insert the lead's name.</small>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary btn-block" id="btn-submit-campaign">Send Campaign</button>
+      </form>
     </div>
   </div>
 
