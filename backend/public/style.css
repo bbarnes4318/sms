@@ -436,6 +436,53 @@ body {
   box-shadow: 0 1px 4px rgba(238, 118, 0, 0.2);
 }
 
+/* Date filters accordion styling */
+.date-filters-accordion {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.01);
+  overflow: hidden;
+  transition: var(--transition-smooth);
+}
+
+.date-filters-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  list-style: none; /* removes default arrow */
+}
+
+.date-filters-summary::-webkit-details-marker {
+  display: none; /* removes default arrow in Chrome/Safari */
+}
+
+.date-filters-summary:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.date-filters-summary .chevron-icon {
+  transition: transform 0.2s ease;
+  color: var(--text-muted);
+}
+
+.date-filters-accordion[open] .date-filters-summary .chevron-icon {
+  transform: rotate(180deg);
+}
+
+.date-filters-content {
+  padding: 10px 12px 12px 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid var(--border-color);
+}
+
 .date-filters {
   display: flex;
   align-items: flex-end;

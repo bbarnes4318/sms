@@ -58,17 +58,25 @@
           <button type="button" class="stage-pill" data-stage="Stage 2">Stage 2</button>
           <button type="button" class="stage-pill" data-stage="Stage 3">Stage 3</button>
         </div>
-        <div class="date-filters">
-          <div class="date-input-group">
-            <label for="filter-from-date">From</label>
-            <input type="date" id="filter-from-date">
+        <details class="date-filters-accordion">
+          <summary class="date-filters-summary">
+            <span>Filter by Date</span>
+            <svg class="chevron-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </summary>
+          <div class="date-filters-content">
+            <div class="date-filters">
+              <div class="date-input-group">
+                <label for="filter-from-date">From</label>
+                <input type="date" id="filter-from-date">
+              </div>
+              <div class="date-input-group">
+                <label for="filter-to-date">To</label>
+                <input type="date" id="filter-to-date">
+              </div>
+              <button type="button" class="btn-clear-date" id="btn-clear-date" title="Clear Date Filters">&times;</button>
+            </div>
           </div>
-          <div class="date-input-group">
-            <label for="filter-to-date">To</label>
-            <input type="date" id="filter-to-date">
-          </div>
-          <button type="button" class="btn-clear-date" id="btn-clear-date" title="Clear Date Filters">&times;</button>
-        </div>
+        </details>
       </div>
       
       <div class="conv-list-header" id="conv-list-header" style="display: none;">
