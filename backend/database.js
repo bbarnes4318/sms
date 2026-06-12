@@ -52,7 +52,6 @@ function initDatabase() {
 
   // Create indexes
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone_number)`).run();
-  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`).run();
 
@@ -73,9 +72,9 @@ function initDatabase() {
   const hasStage = tableInfo.some(column => column.name === 'stage');
   if (!hasStage) {
     db.prepare("ALTER TABLE conversations ADD COLUMN stage TEXT DEFAULT 'Stage 1'").run();
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)").run();
     console.log("Database migration: Added 'stage' column to conversations table.");
   }
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)`).run();
 
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
