@@ -668,6 +668,9 @@ function handleWsMessage(payload) {
     case 'conversation_deleted':
       handleIncomingConversationDeleted(data);
       break;
+    case 'conversation_read':
+      handleIncomingConversationRead(data);
+      break;
   }
 }
 
@@ -676,6 +679,14 @@ function handleIncomingConversationDeleted(data) {
     resetChatToWelcomeBox();
   }
   loadConversations();
+}
+
+function handleIncomingConversationRead(data) {
+  const conv = conversations.find(c => c.id === data.id);
+  if (conv) {
+    conv.unread = 0;
+    renderConversations();
+  }
 }
 
 // Update Stats Cards
@@ -703,6 +714,8 @@ function handleIncomingNewMessage(msg) {
     messages.push(msg);
     appendMessageToFeed(msg);
     scrollToBottom();
+    // Since it's the active conversation, mark it read on server immediately
+    fetch(`/api/conversations/${activeConversation.id}/read`, { method: 'POST' }).catch(e => {});
   }
   
   // Reload conversation list to show correct preview
@@ -820,7 +833,8 @@ function renderConversations() {
     }
 
     const preview = c.last_message_text || 'No messages';
-    const repliedDot = c.last_message_direction === 'inbound' ? `<span class="conv-replied-dot" title="New Reply"></span>` : '';
+    const isUnread = c.unread === 1 || c.unread === '1' || c.unread === true;
+    const repliedDot = isUnread && (!activeConversation || activeConversation.id !== c.id) ? `<span class="conv-replied-dot" title="New Reply"></span>` : '';
     const isChecked = selectedConversations.has(c.id);
 
     item.innerHTML = `
@@ -864,6 +878,10 @@ function filterConversations() {
 // 6. Select active chat
 async function selectConversation(conv) {
   activeConversation = conv;
+  
+  // Reset unread status immediately on click
+  conv.unread = 0;
+  renderConversations();
   
   // UI Selection styling
   document.querySelectorAll('.conversation-item').forEach(el => {

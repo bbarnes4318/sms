@@ -98,12 +98,26 @@ app.delete('/api/conversations/:id', (req, res) => {
   }
 });
 
-// 3. Get messages for a conversation
+// 3. Get messages for a conversation (and mark conversation read)
 app.get('/api/conversations/:id/messages', (req, res) => {
   const convId = parseInt(req.params.id, 10);
   try {
+    db.markConversationRead(convId);
+    broadcast('conversation_read', { id: convId });
     const messages = db.getMessages(convId);
     res.json(messages);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3.5. Mark conversation read explicitly
+app.post('/api/conversations/:id/read', (req, res) => {
+  const convId = parseInt(req.params.id, 10);
+  try {
+    db.markConversationRead(convId);
+    broadcast('conversation_read', { id: convId });
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -76,6 +76,13 @@ function initDatabase() {
   }
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_stage ON conversations(stage)`).run();
 
+  // Migration: Add unread column if not exists
+  const hasUnread = tableInfo.some(column => column.name === 'unread');
+  if (!hasUnread) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN unread INTEGER DEFAULT 0").run();
+    console.log("Database migration: Added 'unread' column to conversations table.");
+  }
+
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
 }
@@ -260,6 +267,7 @@ function insertMessage(msg) {
 
   // Auto-transition to responded substage if inbound reply
   if (msg.direction === 'inbound') {
+    db.prepare("UPDATE conversations SET unread = 1 WHERE id = ?").run(msg.conversation_id);
     const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
     if (conv) {
       let newStage = conv.stage;
@@ -275,6 +283,7 @@ function insertMessage(msg) {
 
   // Auto-transition if manual outbound message sent directly
   if (msg.direction === 'outbound') {
+    db.prepare("UPDATE conversations SET unread = 0 WHERE id = ?").run(msg.conversation_id);
     const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
     if (conv && ['Stage 1', 'Stage 2', 'Stage 3'].includes(conv.stage)) {
       const outboundCount = db.prepare(`
@@ -520,6 +529,10 @@ function getRecentMessages(limit = 10) {
   `).all(limit);
 }
 
+function markConversationRead(id) {
+  return db.prepare("UPDATE conversations SET unread = 0 WHERE id = ?").run(id);
+}
+
 module.exports = {
   db,
   initDatabase,
@@ -535,6 +548,7 @@ module.exports = {
   bulkImportLeads,
   sendBulkMessages,
   deleteConversation,
-  getRecentMessages
+  getRecentMessages,
+  markConversationRead
 };
 
