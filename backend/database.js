@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // Ensure database directory exists
 const dbPath = path.resolve(__dirname, 'database.sqlite');
@@ -47,6 +48,23 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT UNIQUE PRIMARY KEY,
       value TEXT
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      expires_at TEXT NOT NULL
     )
   `).run();
 
@@ -533,6 +551,66 @@ function markConversationRead(id) {
   return db.prepare("UPDATE conversations SET unread = 0 WHERE id = ?").run(id);
 }
 
+// Password Hashing
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, hash] = stored.split(':');
+  const checkHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return hash === checkHash;
+}
+
+// User CRUD & Validation
+function countUsers() {
+  const row = db.prepare('SELECT COUNT(*) as count FROM users').get();
+  return row ? row.count : 0;
+}
+
+function createUser(username, password) {
+  const passwordHash = hashPassword(password);
+  return db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username.trim().toLowerCase(), passwordHash);
+}
+
+function validateUser(username, password) {
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim().toLowerCase());
+  if (!user) return null;
+  if (verifyPassword(password, user.password_hash)) {
+    return { id: user.id, username: user.username };
+  }
+  return null;
+}
+
+// Sessions Management
+function createSession(username) {
+  const token = crypto.randomBytes(32).toString('hex');
+  // Expires in 7 days
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO sessions (token, username, expires_at) VALUES (?, ?, ?)').run(token, username.trim().toLowerCase(), expiresAt);
+  return { token, username, expires_at: expiresAt };
+}
+
+function validateSession(token) {
+  const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+  if (!session) return null;
+  
+  const now = new Date().toISOString();
+  if (session.expires_at < now) {
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    return null;
+  }
+  
+  return session;
+}
+
+function deleteSession(token) {
+  return db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+}
+
 module.exports = {
   db,
   initDatabase,
@@ -549,6 +627,12 @@ module.exports = {
   sendBulkMessages,
   deleteConversation,
   getRecentMessages,
-  markConversationRead
+  markConversationRead,
+  countUsers,
+  createUser,
+  validateUser,
+  createSession,
+  validateSession,
+  deleteSession
 };
 

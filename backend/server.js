@@ -19,14 +19,134 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Helper to parse cookies
+function getCookie(cookieString, name) {
+  if (!cookieString) return null;
+  const match = cookieString.match(new RegExp('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)'));
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
 // Middleware
 app.use(express.json());
+
+// Auth status (public check)
+app.get('/api/auth/status', (req, res) => {
+  try {
+    const userCount = db.countUsers();
+    res.json({ has_admin: userCount > 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin signup (first time setup)
+app.post('/api/auth/signup', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  try {
+    const userCount = db.countUsers();
+    if (userCount > 0) {
+      return res.status(403).json({ error: 'Administrator already configured' });
+    }
+    db.createUser(username, password);
+    const session = db.createSession(username);
+    res.setHeader('Set-Cookie', `session_token=${session.token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    res.json({ success: true, username: session.username });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Login
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  try {
+    const user = db.validateUser(username, password);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    const session = db.createSession(user.username);
+    res.setHeader('Set-Cookie', `session_token=${session.token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    res.json({ success: true, username: session.username });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const token = getCookie(req.headers.cookie, 'session_token');
+    if (token) {
+      db.deleteSession(token);
+    }
+    res.setHeader('Set-Cookie', `session_token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Render login page
+app.get('/login', (req, res) => {
+  const token = getCookie(req.headers.cookie, 'session_token');
+  const session = token ? db.validateSession(token) : null;
+  if (session) {
+    return res.redirect('/');
+  }
+  res.sendFile(path.resolve(__dirname, 'public', 'login.html'));
+});
+
+// Exclude public paths from authentication
+const PUBLIC_PATHS = [
+  '/login',
+  '/login.html',
+  '/login.css',
+  '/login.js',
+  '/leadzer.png',
+  '/favicon.ico',
+  '/api/auth/status',
+  '/api/auth/signup',
+  '/api/auth/login'
+];
+
+app.use((req, res, next) => {
+  if (PUBLIC_PATHS.includes(req.path) || req.path.startsWith('/webhook/')) {
+    return next();
+  }
+
+  const token = getCookie(req.headers.cookie, 'session_token');
+  const session = token ? db.validateSession(token) : null;
+  if (!session) {
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return res.redirect('/login');
+  }
+
+  req.user = session;
+  next();
+});
+
+// Serve main static assets
 app.use(express.static(path.resolve(__dirname, 'public')));
 
 // Store WebSocket clients
 const clients = new Set();
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  const token = getCookie(req.headers.cookie, 'session_token');
+  const session = token ? db.validateSession(token) : null;
+  if (!session) {
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+
   clients.add(ws);
   console.log('Client connected. Total clients:', clients.size);
   

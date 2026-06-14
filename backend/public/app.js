@@ -1,3 +1,22 @@
+// Global Fetch Interceptor for 401 Unauthorized
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+  try {
+    const response = await originalFetch(...args);
+    if (response.status === 401) {
+      console.warn("Session expired or unauthorized. Redirecting to login...");
+      window.location.href = '/login';
+      return new Response(JSON.stringify({ error: 'Session expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return response;
+  } catch (err) {
+    throw err;
+  }
+};
+
 // Application State
 let activeConversation = null;
 let conversations = [];
@@ -522,6 +541,24 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Logout handler
+  const btnLogout = document.getElementById('btn-logout');
+  if (btnLogout) {
+    btnLogout.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        if (res.ok) {
+          window.location.href = '/login';
+        } else {
+          alert('Failed to log out.');
+        }
+      } catch (err) {
+        console.error('Logout error:', err);
+        alert('Network error during logout.');
+      }
+    });
+  }
 });
 
 // 2. Load API Data
@@ -635,7 +672,13 @@ function setupWebSockets() {
     handleWsMessage(payload);
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    if (event && event.code === 4001) {
+      console.warn("WebSocket closed (unauthorized). Redirecting to login...");
+      window.location.href = '/login';
+      return;
+    }
+
     console.warn("WebSocket closed. Attempting reconnect in 3s...");
     wsStatus.textContent = 'WS Disconnected';
     wsStatus.className = 'status-indicator offline';
