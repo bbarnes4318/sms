@@ -117,10 +117,36 @@ const bulkSenderSelect = document.getElementById('bulk-sender-select');
 
 // 1. Initial Load & Setup
 window.addEventListener('DOMContentLoaded', () => {
+  // Check URL parameters for imported leads
+  const urlParams = new URLSearchParams(window.location.search);
+  const importSource = urlParams.get('import');
+  const encodedData = urlParams.get('data');
+  if (importSource === 'storm-map-demo' && encodedData) {
+    try {
+      const decodedJson = decodeURIComponent(escape(atob(encodedData)));
+      const importedLeads = JSON.parse(decodedJson);
+      if (Array.isArray(importedLeads)) {
+        localStorage.setItem('storm_map_imported_leads', JSON.stringify(importedLeads));
+        const county = urlParams.get('county') || '';
+        const state = urlParams.get('state') || '';
+        localStorage.setItem('storm_map_imported_county', county);
+        localStorage.setItem('storm_map_imported_state', state);
+        
+        currentStatusFilter = 'storm-demo';
+        
+        // Remove query parameters from address bar
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch (err) {
+      console.error("Failed to parse imported leads:", err);
+    }
+  }
+
   loadConversations();
   loadSettings();
   loadRecentActivity();
   setupWebSockets();
+  updateStormLeadsBadge();
   
   // Set webhook URL based on current host
   const host = window.location.host;
@@ -137,8 +163,38 @@ window.addEventListener('DOMContentLoaded', () => {
       pill.classList.add('active');
       currentStatusFilter = pill.dataset.status;
       filterConversations();
+      toggleViewsBasedOnFilter();
     });
   });
+
+  // If initial status filter is storm-demo, activate the pill and views
+  if (currentStatusFilter === 'storm-demo') {
+    document.querySelectorAll('.status-pill').forEach(p => {
+      if (p.dataset.status === 'storm-demo') {
+        p.classList.add('active');
+      } else {
+        p.classList.remove('active');
+      }
+    });
+    toggleViewsBasedOnFilter();
+  }
+
+  // Clear storm leads button handler
+  const btnClearStormLeads = document.getElementById('btn-clear-storm-leads');
+  if (btnClearStormLeads) {
+    btnClearStormLeads.addEventListener('click', () => {
+      if (confirm("Are you sure you want to clear all imported demo leads?")) {
+        localStorage.removeItem('storm_map_imported_leads');
+        localStorage.removeItem('storm_map_imported_county');
+        localStorage.removeItem('storm_map_imported_state');
+        updateStormLeadsBadge();
+        if (currentStatusFilter === 'storm-demo') {
+          renderConversations();
+          renderStormLeadsTable();
+        }
+      }
+    });
+  }
 
   // Stage Filters click handlers
   document.querySelectorAll('.stage-pill').forEach(pill => {
@@ -802,6 +858,29 @@ function handleIncomingMessageStatusUpdate(update) {
 
 function getFilteredConversations() {
   const query = searchInput.value.toLowerCase().trim();
+  
+  if (currentStatusFilter === 'storm-demo') {
+    const leadsJson = localStorage.getItem('storm_map_imported_leads');
+    const leads = leadsJson ? JSON.parse(leadsJson) : [];
+    
+    return leads
+      .map((lead, index) => ({
+        id: `lead-${index}`,
+        phone_number: lead.phone,
+        name: lead.name,
+        isLead: true,
+        leadData: lead,
+        last_message_text: `${lead.stormType || 'Storm'} Lead · ${lead.confidence || 'High'} Conf`,
+        last_message_at: lead.stormDate,
+        unread: false
+      }))
+      .filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = c.phone_number.toLowerCase();
+        return name.includes(query) || phone.includes(query);
+      });
+  }
+
   return conversations.filter(c => {
     // 1. Search query filter
     const name = (c.name || '').toLowerCase();
@@ -922,6 +1001,62 @@ function filterConversations() {
 async function selectConversation(conv) {
   activeConversation = conv;
   
+  if (conv && conv.isLead) {
+    // UI Selection styling
+    document.querySelectorAll('.conversation-item').forEach(el => {
+      el.classList.remove('active');
+      if (el.dataset.id === conv.id) {
+        el.classList.add('active');
+      }
+    });
+
+    const stormLeadsView = document.getElementById('storm-leads-view');
+    if (stormLeadsView) stormLeadsView.style.display = 'none';
+    
+    chatHeader.style.display = 'flex';
+    messagesFeed.style.display = 'block';
+    chatComposerContainer.style.display = 'block';
+    
+    // Setup Chat Header
+    const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
+    activeAvatar.textContent = initials;
+    activeContactName.textContent = conv.name || conv.phone_number;
+    activeContactPhone.textContent = `Demo Lead · ${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state}`;
+    
+    btnDeleteChat.style.display = 'none';
+    
+    messagesFeed.innerHTML = `
+      <div class="feed-placeholder">
+        <div class="welcome-box" style="text-align: left; max-width: 500px; padding: 20px; border: 1px solid var(--border-color); background: var(--bg-card); box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-top: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+            <div class="avatar" style="background: var(--primary-gradient); color: white; border: none;">${initials}</div>
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 15px; color: var(--text-main); margin: 0;">${conv.name}</h3>
+              <p class="subtext" style="margin: 2px 0 0 0;">${conv.phone_number}</p>
+            </div>
+          </div>
+          <div style="font-size: 12px; line-height: 1.6; display: flex; flex-direction: column; gap: 8px; color: var(--text-muted);">
+            <div><strong>Property Address:</strong> <span style="color: var(--text-main);">${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state} ${conv.leadData.zip}</span></div>
+            <div><strong>County:</strong> <span style="color: var(--text-main);">${conv.leadData.county}</span></div>
+            <div><strong>Roof Age:</strong> <span style="color: var(--text-main);">${conv.leadData.roofAge}</span></div>
+            <div><strong>Storm Hazard:</strong> <span style="color: var(--text-main);">${conv.leadData.stormType} (${conv.leadData.stormDate})</span></div>
+            ${conv.leadData.hailSize !== '-' ? `<div><strong>Hail Size:</strong> <span style="color: var(--text-main);">${conv.leadData.hailSize}</span></div>` : ''}
+            ${conv.leadData.windSpeed !== '-' ? `<div><strong>Wind Speed:</strong> <span style="color: var(--text-main);">${conv.leadData.windSpeed}</span></div>` : ''}
+            <div><strong>Confidence Score:</strong> <span class="confidence-badge ${conv.leadData.confidence.toLowerCase()}">${conv.leadData.confidence}</span></div>
+          </div>
+          <div style="margin-top: 16px; font-size: 11px; font-style: italic; color: var(--text-muted); border-top: 1px solid var(--border-color); padding-top: 12px;">
+            Type a message below to send an SMS to this homeowner. Sending a message will automatically start a real conversation.
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const templateText = `Hello ${conv.name}, we noticed your home at ${conv.leadData.address} in ${conv.leadData.county || localStorage.getItem('storm_map_imported_county') || ''} County was in the path of the recent ${conv.leadData.stormType || 'storm'}. Would you like a free inspection?`;
+    messageInput.value = templateText;
+    updateCharCounter(messageInput, chatCharCounter);
+    return;
+  }
+
   // Reset unread status immediately on click
   conv.unread = 0;
   renderConversations();
@@ -1042,6 +1177,44 @@ async function handleSendMessage(e) {
 
   const fromNum = composerSenderSelect ? composerSenderSelect.value : null;
 
+  let convId = activeConversation.id;
+  if (activeConversation.isLead) {
+    try {
+      const convRes = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone_number: activeConversation.phone_number,
+          name: activeConversation.name
+        })
+      });
+
+      if (!convRes.ok) {
+        const err = await convRes.json();
+        throw new Error(err.error || "Failed to create conversation");
+      }
+
+      const conv = await convRes.json();
+      convId = conv.id;
+      
+      const leadsJson = localStorage.getItem('storm_map_imported_leads');
+      if (leadsJson) {
+        let leads = JSON.parse(leadsJson);
+        const idx = leads.findIndex(l => l.phone === activeConversation.phone_number);
+        if (idx !== -1) {
+          leads.splice(idx, 1);
+          localStorage.setItem('storm_map_imported_leads', JSON.stringify(leads));
+          updateStormLeadsBadge();
+        }
+      }
+    } catch (err) {
+      console.error("Failed to create conversation for lead:", err);
+      alert("Error starting conversation: " + err.message);
+      btnSend.disabled = false;
+      return;
+    }
+  }
+
   const payload = {
     body: body,
     media_urls: mediaUrl ? [mediaUrl] : null,
@@ -1049,7 +1222,7 @@ async function handleSendMessage(e) {
   };
 
   try {
-    const res = await fetch(`/api/conversations/${activeConversation.id}/messages`, {
+    const res = await fetch(`/api/conversations/${convId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1061,6 +1234,21 @@ async function handleSendMessage(e) {
       messageInput.style.height = 'auto';
       mediaUrlInput.value = '';
       updateCharCounter(messageInput, chatCharCounter);
+      
+      if (activeConversation.isLead) {
+        document.querySelectorAll('.status-pill').forEach(p => {
+          if (p.dataset.status === 'pending') {
+            p.click();
+          }
+        });
+        setTimeout(async () => {
+          await loadConversations();
+          const newConv = conversations.find(c => c.id === convId);
+          if (newConv) {
+            selectConversation(newConv);
+          }
+        }, 300);
+      }
     } else {
       const err = await res.json();
       alert("Error queueing message: " + err.error);
@@ -1598,5 +1786,113 @@ function formatRelativeTime(dateStr) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+// Storm Leads UI Helper Functions
+function toggleViewsBasedOnFilter() {
+  const stormLeadsView = document.getElementById('storm-leads-view');
+  
+  if (currentStatusFilter === 'storm-demo') {
+    chatHeader.style.display = 'none';
+    messagesFeed.style.display = 'none';
+    chatComposerContainer.style.display = 'none';
+    
+    if (stormLeadsView) {
+      stormLeadsView.style.display = 'flex';
+      renderStormLeadsTable();
+    }
+  } else {
+    if (activeConversation && !activeConversation.isLead) {
+      chatHeader.style.display = 'flex';
+      messagesFeed.style.display = 'block';
+      chatComposerContainer.style.display = 'block';
+    } else {
+      chatHeader.style.display = 'flex';
+      messagesFeed.style.display = 'block';
+      chatComposerContainer.style.display = 'none';
+      if (activeConversation && activeConversation.isLead) {
+        resetChatToWelcomeBox();
+      }
+    }
+    
+    if (stormLeadsView) {
+      stormLeadsView.style.display = 'none';
+    }
+  }
+}
+
+function renderStormLeadsTable() {
+  const tableBody = document.getElementById('storm-leads-table-body');
+  if (!tableBody) return;
+  
+  const leadsJson = localStorage.getItem('storm_map_imported_leads');
+  const leads = leadsJson ? JSON.parse(leadsJson) : [];
+  
+  if (leads.length === 0) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 40px;">
+          No demo leads imported. Run a scan in the Storm Map app and click "Send Leads to SMS App".
+        </td>
+      </tr>
+    `;
+    return;
+  }
+  
+  tableBody.innerHTML = '';
+  leads.forEach((lead, index) => {
+    const row = document.createElement('tr');
+    const hazardClass = (lead.stormType || 'hail').toLowerCase();
+    const confClass = (lead.confidence || 'high').toLowerCase();
+    
+    row.innerHTML = `
+      <td style="font-weight: 600; color: var(--text-main);">${lead.name}</td>
+      <td style="color: var(--text-muted);">${lead.address}, ${lead.city}, ${lead.state}</td>
+      <td style="font-family: monospace; color: var(--text-muted);">${lead.phone}</td>
+      <td style="color: var(--text-muted);">${lead.roofAge}</td>
+      <td>
+        <span class="hazard-badge ${hazardClass}">${lead.stormType}</span>
+      </td>
+      <td>
+        <span class="confidence-badge ${confClass}">${lead.confidence}</span>
+      </td>
+      <td style="text-align: right;">
+        <button type="button" class="btn-primary btn-small btn-send-sms" data-index="${index}" style="padding: 6px 12px; font-size: 11px; display: inline-flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 4px;">
+          Send SMS
+        </button>
+      </td>
+    `;
+    
+    row.querySelector('.btn-send-sms').addEventListener('click', () => {
+      const leadConv = {
+        id: `lead-${index}`,
+        phone_number: lead.phone,
+        name: lead.name,
+        isLead: true,
+        leadData: lead,
+        last_message_text: `${lead.stormType || 'Storm'} Lead · ${lead.confidence || 'High'} Conf`,
+        last_message_at: lead.stormDate,
+        unread: false
+      };
+      selectConversation(leadConv);
+    });
+    
+    tableBody.appendChild(row);
+  });
+}
+
+function updateStormLeadsBadge() {
+  const badge = document.getElementById('storm-demo-count');
+  const leadsJson = localStorage.getItem('storm_map_imported_leads');
+  const leads = leadsJson ? JSON.parse(leadsJson) : [];
+  
+  if (badge) {
+    if (leads.length > 0) {
+      badge.textContent = leads.length;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
 }
 

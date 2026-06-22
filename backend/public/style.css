@@ -1944,3 +1944,116 @@ body {
 }
 
 
+/* Storm Leads View Styles */
+.storm-leads-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+  background-color: var(--bg-chat);
+}
+
+.storm-leads-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.leads-table-wrapper {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.leads-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.leads-table th {
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.leads-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.leads-table tr:last-child td {
+  border-bottom: none;
+}
+
+.leads-table tr:hover td {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.hazard-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hazard-badge.hail {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+
+.hazard-badge.wind {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+}
+
+.hazard-badge.tornado {
+  background: rgba(244, 63, 94, 0.15);
+  color: #f43f5e;
+}
+
+.hazard-badge.alerts {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.confidence-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.confidence-badge.high {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.confidence-badge.medium {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.confidence-badge.low {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+

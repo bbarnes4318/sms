@@ -50,6 +50,7 @@
         <div class="status-filters">
           <button type="button" class="status-pill active" data-status="responded">Responded</button>
           <button type="button" class="status-pill" data-status="pending">Pending</button>
+          <button type="button" class="status-pill" data-status="storm-demo" id="tab-storm-demo">Storm Demo <span class="badge" id="storm-demo-count" style="display:none; background: var(--success); color: white; border-radius: 10px; padding: 1px 6px; font-size: 9px; margin-left: 4px;">0</span></button>
         </div>
         <!-- Tier 2: Stage Filters -->
         <div class="stage-filters">
@@ -152,6 +153,35 @@
           </button>
         </form>
       </footer>
+
+      <!-- Storm Leads View -->
+      <section id="storm-leads-view" class="storm-leads-view" style="display: none;">
+        <div class="storm-leads-header">
+          <div>
+            <h2 style="font-family: var(--font-heading); font-size: 20px; color: var(--text-main); margin-bottom: 4px;">Website Demo Storm Map Leads</h2>
+            <p class="subtext" id="storm-leads-subtitle">Leads received from website demo storm-maps form</p>
+          </div>
+          <button type="button" id="btn-clear-storm-leads" class="btn-danger btn-small" style="padding: 6px 12px; font-size: 11px;">Clear Demo Leads</button>
+        </div>
+        <div class="leads-table-wrapper">
+          <table class="leads-table">
+            <thead>
+              <tr>
+                <th>Homeowner</th>
+                <th>Address</th>
+                <th>Phone</th>
+                <th>Roof Age</th>
+                <th>Storm Hazard</th>
+                <th>Confidence</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="storm-leads-table-body">
+              <!-- Dynamic lead rows -->
+            </tbody>
+          </table>
+        </div>
+      </section>
     </main>
     
     <!-- Right Panel: NOC Monitoring Station -->
