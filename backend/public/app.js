@@ -1021,10 +1021,33 @@ async function selectConversation(conv) {
     const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
     activeAvatar.textContent = initials;
     activeContactName.textContent = conv.name || conv.phone_number;
-    activeContactPhone.textContent = `Demo Lead · ${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state}`;
+    activeContactPhone.textContent = conv.leadData.stormType === "Demo Form" 
+      ? `Demo Form Submission · ${conv.leadData.roofAge}`
+      : `Demo Lead · ${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state}`;
     
     btnDeleteChat.style.display = 'none';
     
+    let detailsHtml = '';
+    if (conv.leadData.stormType === "Demo Form") {
+      detailsHtml = `
+            <div><strong>Requested Plan:</strong> <span style="color: var(--text-main);">${conv.leadData.roofAge}</span></div>
+            <div><strong>Requested Market:</strong> <span style="color: var(--text-main);">${conv.leadData.county}</span></div>
+            <div><strong>Email Address:</strong> <span style="color: var(--text-main);">${conv.leadData.email}</span></div>
+            <div><strong>Submission Type:</strong> <span class="hazard-badge demo-form">${conv.leadData.stormType}</span></div>
+            <div><strong>Confidence Score:</strong> <span class="confidence-badge ${conv.leadData.confidence.toLowerCase()}">${conv.leadData.confidence}</span></div>
+      `;
+    } else {
+      detailsHtml = `
+            <div><strong>Property Address:</strong> <span style="color: var(--text-main);">${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state} ${conv.leadData.zip}</span></div>
+            <div><strong>County:</strong> <span style="color: var(--text-main);">${conv.leadData.county}</span></div>
+            <div><strong>Roof Age:</strong> <span style="color: var(--text-main);">${conv.leadData.roofAge}</span></div>
+            <div><strong>Storm Hazard:</strong> <span style="color: var(--text-main);">${conv.leadData.stormType} (${conv.leadData.stormDate})</span></div>
+            ${conv.leadData.hailSize !== '-' ? `<div><strong>Hail Size:</strong> <span style="color: var(--text-main);">${conv.leadData.hailSize}</span></div>` : ''}
+            ${conv.leadData.windSpeed !== '-' ? `<div><strong>Wind Speed:</strong> <span style="color: var(--text-main);">${conv.leadData.windSpeed}</span></div>` : ''}
+            <div><strong>Confidence Score:</strong> <span class="confidence-badge ${conv.leadData.confidence.toLowerCase()}">${conv.leadData.confidence}</span></div>
+      `;
+    }
+
     messagesFeed.innerHTML = `
       <div class="feed-placeholder">
         <div class="welcome-box" style="text-align: left; max-width: 500px; padding: 20px; border: 1px solid var(--border-color); background: var(--bg-card); box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-top: 10px;">
@@ -1036,22 +1059,24 @@ async function selectConversation(conv) {
             </div>
           </div>
           <div style="font-size: 12px; line-height: 1.6; display: flex; flex-direction: column; gap: 8px; color: var(--text-muted);">
-            <div><strong>Property Address:</strong> <span style="color: var(--text-main);">${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state} ${conv.leadData.zip}</span></div>
-            <div><strong>County:</strong> <span style="color: var(--text-main);">${conv.leadData.county}</span></div>
-            <div><strong>Roof Age:</strong> <span style="color: var(--text-main);">${conv.leadData.roofAge}</span></div>
-            <div><strong>Storm Hazard:</strong> <span style="color: var(--text-main);">${conv.leadData.stormType} (${conv.leadData.stormDate})</span></div>
-            ${conv.leadData.hailSize !== '-' ? `<div><strong>Hail Size:</strong> <span style="color: var(--text-main);">${conv.leadData.hailSize}</span></div>` : ''}
-            ${conv.leadData.windSpeed !== '-' ? `<div><strong>Wind Speed:</strong> <span style="color: var(--text-main);">${conv.leadData.windSpeed}</span></div>` : ''}
-            <div><strong>Confidence Score:</strong> <span class="confidence-badge ${conv.leadData.confidence.toLowerCase()}">${conv.leadData.confidence}</span></div>
+            ${detailsHtml}
           </div>
           <div style="margin-top: 16px; font-size: 11px; font-style: italic; color: var(--text-muted); border-top: 1px solid var(--border-color); padding-top: 12px;">
-            Type a message below to send an SMS to this homeowner. Sending a message will automatically start a real conversation.
+            Type a message below to send an SMS to this contact. Sending a message will automatically start a real conversation.
           </div>
         </div>
       </div>
     `;
     
-    const templateText = `Hello ${conv.name}, we noticed your home at ${conv.leadData.address} in ${conv.leadData.county || localStorage.getItem('storm_map_imported_county') || ''} County was in the path of the recent ${conv.leadData.stormType || 'storm'}. Would you like a free inspection?`;
+    let templateText = '';
+    if (conv.leadData.stormType === "Demo Form") {
+      const firstName = conv.name.split(' ')[0];
+      const planName = conv.leadData.roofAge || 'Quarterly Lead Plan';
+      const requestedMarket = conv.leadData.county || 'your market';
+      templateText = `Hello ${firstName}, thank you for requesting pricing for the ${planName} in ${requestedMarket}. This is Braden from StormTarget. Do you have time for a quick call?`;
+    } else {
+      templateText = `Hello ${conv.name}, we noticed your home at ${conv.leadData.address} in ${conv.leadData.county || localStorage.getItem('storm_map_imported_county') || ''} County was in the path of the recent ${conv.leadData.stormType || 'storm'}. Would you like a free inspection?`;
+    }
     messageInput.value = templateText;
     updateCharCounter(messageInput, chatCharCounter);
     return;

@@ -2032,6 +2032,11 @@ body {
   color: #fbbf24;
 }
 
+.hazard-badge.demo-form {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
 .confidence-badge {
   display: inline-block;
   padding: 2px 8px;
