@@ -4,6 +4,37 @@ const EventEmitter = require('events');
 let fractelToken = null;
 let fractelTokenExpiresAt = 0;
 
+// Fetch with timeout wrapper using AbortController
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// SMS Send retry engine
+async function sendSmsWithRetry(sendFn, maxRetries = 3, baseDelayMs = 2000) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await sendFn();
+    } catch (err) {
+      attempt++;
+      console.warn(`SMS Send Attempt ${attempt} failed: ${err.message}`);
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const backoffDelay = baseDelayMs * attempt;
+      console.log(`Retrying in ${backoffDelay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, backoffDelay));
+    }
+  }
+}
+
 async function getFractelToken(settings) {
   const username = settings.fractel_username || '';
   const password = settings.fractel_password || '';
@@ -18,7 +49,7 @@ async function getFractelToken(settings) {
   }
 
   console.log('Fetching new FracTEL auth token...');
-  const response = await fetch('https://api.fonestorm.com/v2/auth', {
+  const response = await fetchWithTimeout('https://api.fonestorm.com/v2/auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -26,7 +57,7 @@ async function getFractelToken(settings) {
       password: password,
       expires: 86400
     })
-  });
+  }, 10000);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -49,6 +80,7 @@ class QueueWorker extends EventEmitter {
   constructor() {
     super();
     this.isRunning = false;
+    this.isProcessing = false; // Concurrency guard
     this.timer = null;
   }
 
@@ -70,12 +102,19 @@ class QueueWorker extends EventEmitter {
 
   async processNext() {
     if (!this.isRunning) return;
+    
+    // Prevent multiple concurrent message processing threads
+    if (this.isProcessing) {
+      return;
+    }
+    this.isProcessing = true;
 
     try {
       const msg = db.getNextQueuedMessage();
       if (!msg) {
         // No messages in queue, check again in 1 second
         this.timer = setTimeout(() => this.processNext(), 1000);
+        this.isProcessing = false;
         return;
       }
 
@@ -112,7 +151,8 @@ class QueueWorker extends EventEmitter {
       if (isFractel) {
         // --- ROUTE VIA FRACTEL (FONESTORM) ---
         console.log(`Routing message ID ${msg.id} via FracTEL...`);
-        try {
+        
+        const sendFn = async () => {
           const token = await getFractelToken(settings);
           const toNum = msg.to_number.replace(/[^\d]/g, '');
           
@@ -127,39 +167,50 @@ class QueueWorker extends EventEmitter {
             try {
               const urls = JSON.parse(msg.media_urls);
               if (urls && urls.length > 0) {
-                payload.media = urls[0]; // FoneStorm takes a single string URL for media
+                payload.media = urls[0];
               }
             } catch (e) {
               console.error("Failed to parse media URLs JSON:", e);
             }
           }
 
-          const response = await fetch('https://api.fonestorm.com/v2/messages/send', {
+          const response = await fetchWithTimeout('https://api.fonestorm.com/v2/messages/send', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'token': token
             },
             body: JSON.stringify(payload)
-          });
+          }, 10000);
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Carrier HTTP ${response.status}: ${text}`);
+          }
 
           const data = await response.json();
           console.log("FracTEL API response:", JSON.stringify(data));
 
-          if (response.ok && data.message && data.message.id) {
-            isSuccess = true;
-            refId = data.message.id;
+          if (data.message && data.message.id) {
+            return data.message.id;
           } else {
-            errorMsg = (data.error && data.error.message) || data.message || `API Error ${response.status}`;
+            throw new Error(data.message || 'Unknown response structure');
           }
+        };
+
+        try {
+          const resultRefId = await sendSmsWithRetry(sendFn, 3, 2000);
+          isSuccess = true;
+          refId = resultRefId;
         } catch (err) {
-          console.error("FracTEL sending failed:", err);
+          console.error(`FracTEL sending failed for message ${msg.id}:`, err);
           errorMsg = err.message || "Failed to connect to FracTEL API";
         }
       } else {
         // --- ROUTE VIA BULKVS (DEFAULT) ---
         console.log(`Routing message ID ${msg.id} via BulkVS...`);
-        try {
+
+        const sendFn = async () => {
           const username = settings.bulkvs_username || '';
           const token = settings.bulkvs_token || '';
           const auth = Buffer.from(`${username}:${token}`).toString('base64');
@@ -182,7 +233,7 @@ class QueueWorker extends EventEmitter {
             }
           }
 
-          const response = await fetch('https://portal.bulkvs.com/api/v1.0/messageSend', {
+          const response = await fetchWithTimeout('https://portal.bulkvs.com/api/v1.0/messageSend', {
             method: 'POST',
             headers: {
               'accept': 'application/json',
@@ -190,23 +241,35 @@ class QueueWorker extends EventEmitter {
               'Authorization': authHeader
             },
             body: JSON.stringify(payload)
-          });
+          }, 10000);
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Carrier HTTP ${response.status}: ${text}`);
+          }
 
           const data = await response.json();
           console.log("Bulkvs API response:", JSON.stringify(data));
 
-          isSuccess = response.ok && (
+          const ok = (
             (data.Results && data.Results[0] && data.Results[0].Status === 'SUCCESS') ||
             (data.RefId && !data.error && !data.message)
           );
 
-          if (isSuccess) {
-            refId = data.RefId || '';
+          if (ok) {
+            return data.RefId || (data.Results && data.Results[0] && data.Results[0].MessageId) || '';
           } else {
-            errorMsg = (data.Results && data.Results[0] && data.Results[0].Error) || data.message || 'API error';
+            const errStr = (data.Results && data.Results[0] && data.Results[0].Error) || data.message || 'API error';
+            throw new Error(errStr);
           }
+        };
+
+        try {
+          const resultRefId = await sendSmsWithRetry(sendFn, 3, 2000);
+          isSuccess = true;
+          refId = resultRefId;
         } catch (err) {
-          console.error("BulkVS sending failed:", err);
+          console.error(`BulkVS sending failed for message ${msg.id}:`, err);
           errorMsg = err.message || "Failed to connect to BulkVS API";
         }
       }
@@ -231,12 +294,18 @@ class QueueWorker extends EventEmitter {
       }
 
       // Schedule next check based on configured rate limit
-      this.timer = setTimeout(() => this.processNext(), sendInterval);
+      this.timer = setTimeout(() => {
+        this.isProcessing = false;
+        this.processNext();
+      }, sendInterval);
 
     } catch (err) {
       console.error("Queue worker error processing message:", err);
       // Wait 5 seconds on system error before retrying
-      this.timer = setTimeout(() => this.processNext(), 5000);
+      this.timer = setTimeout(() => {
+        this.isProcessing = false;
+        this.processNext();
+      }, 5000);
     }
   }
 }

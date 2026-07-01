@@ -103,6 +103,16 @@ function initDatabase() {
 
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
+
+  // Reset any stuck sending messages to queued status on startup
+  try {
+    const result = db.prepare("UPDATE messages SET status = 'queued' WHERE status = 'sending'").run();
+    if (result.changes > 0) {
+      console.log(`Database initialized: Reset ${result.changes} stuck 'sending' messages back to 'queued'.`);
+    }
+  } catch (err) {
+    console.error("Failed to reset stuck sending messages:", err);
+  }
 }
 
 function normalizePhoneNumber(phone) {
