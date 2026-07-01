@@ -101,6 +101,13 @@ function initDatabase() {
     console.log("Database migration: Added 'unread' column to conversations table.");
   }
 
+  // Migration: Add city column if not exists
+  const hasCity = tableInfo.some(column => column.name === 'city');
+  if (!hasCity) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN city TEXT").run();
+    console.log("Database migration: Added 'city' column to conversations table.");
+  }
+
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
 
@@ -226,7 +233,7 @@ function getConversations() {
   `).all();
 }
 
-function getOrCreateConversation(phoneNumber, contactName = null) {
+function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
   const cleanPhone = normalizePhoneNumber(phoneNumber);
   if (!cleanPhone) {
     throw new Error("Invalid phone number");
@@ -236,11 +243,12 @@ function getOrCreateConversation(phoneNumber, contactName = null) {
   let conv = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(cleanPhone);
   if (!conv) {
     try {
-      const result = db.prepare('INSERT INTO conversations (phone_number, name) VALUES (?, ?)').run(cleanPhone, contactName);
+      const result = db.prepare('INSERT INTO conversations (phone_number, name, city) VALUES (?, ?, ?)').run(cleanPhone, contactName, city);
       conv = {
         id: result.lastInsertRowid,
         phone_number: cleanPhone,
         name: contactName,
+        city: city,
         last_message_text: null,
         last_message_at: null,
         created_at: new Date().toISOString()
@@ -249,9 +257,28 @@ function getOrCreateConversation(phoneNumber, contactName = null) {
       // Handle race condition
       conv = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(cleanPhone);
     }
-  } else if (contactName && conv.name !== contactName) {
-    db.prepare('UPDATE conversations SET name = ? WHERE id = ?').run(contactName, conv.id);
-    conv.name = contactName;
+  } else {
+    let needsUpdate = false;
+    const updateFields = [];
+    const updateValues = [];
+
+    if (contactName && conv.name !== contactName) {
+      conv.name = contactName;
+      updateFields.push("name = ?");
+      updateValues.push(contactName);
+      needsUpdate = true;
+    }
+    if (city && conv.city !== city) {
+      conv.city = city;
+      updateFields.push("city = ?");
+      updateValues.push(city);
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      updateValues.push(conv.id);
+      db.prepare(`UPDATE conversations SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
+    }
   }
   return conv;
 }
@@ -426,7 +453,7 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
     for (const lead of leadsList) {
       if (!lead.phone_number) continue;
       
-      const conv = getOrCreateConversation(lead.phone_number, lead.name);
+      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city);
       insertedConvs.push(conv);
 
       // Reset stage to Stage 1 upon re-import/new import
@@ -436,7 +463,9 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
         // Replace placeholders
         let body = messageTemplate;
         const nameVal = lead.name || '';
+        const cityVal = lead.city || '';
         body = body.replace(/\[Name\]/gi, nameVal);
+        body = body.replace(/\[City\]/gi, cityVal);
         
         const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
         insertedMessages.push({
@@ -506,7 +535,9 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
       // Replace placeholders
       let body = messageTemplate;
       const nameVal = conv.name || '';
+      const cityVal = conv.city || '';
       body = body.replace(/\[Name\]/gi, nameVal);
+      body = body.replace(/\[City\]/gi, cityVal);
       
       const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
       insertedMessages.push({
