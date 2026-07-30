@@ -256,8 +256,8 @@ app.post('/api/conversations/:id/messages', (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    const settings = db.getSettings();
-    const fromNum = from_number || settings.sender_number || '+18887885527';
+    // Sticky rotation: reuses this contact's pinned DID, or claims the next one.
+    const fromNum = db.resolveSenderNumber(convId, from_number);
 
     const msgData = {
       conversation_id: convId,
@@ -570,6 +570,15 @@ app.post('/webhook/inbound', (req, res) => {
     // Create/get conversation for sender
     // Normalize From number to database format
     const conv = db.getOrCreateConversation(From);
+
+    // Pin the conversation to whichever of our DIDs they texted, so our reply
+    // goes back from the number already showing in their thread.
+    if (!conv.assigned_did) {
+      const inboundDid = (toNum || '').replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, '');
+      if (db.getFractelDidPool().includes(inboundDid)) {
+        db.setConversationDid(conv.id, inboundDid);
+      }
+    }
 
     const msgData = {
       conversation_id: conv.id,

@@ -629,26 +629,47 @@ async function loadConversations() {
   }
 }
 
+function formatDid(did) {
+  const d = (did || '').replace(/[^\d]/g, '');
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : did;
+}
+
 function updateSenderDropdowns(settings) {
   const bulkvsNumber = settings.sender_number || '+18887885527';
-  const fractelDefault = settings.fractel_sender_number || '8653456051';
+
+  // The DIDs cleared for sending, in rotation order.
+  const pool = (settings.fractel_enabled_dids || '')
+    .split(',')
+    .map(d => d.trim().replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, ''))
+    .filter(d => d.length === 10);
 
   const options = [];
-  
+
+  // Rotation is the default: spreads sends across the pool, but pins each
+  // contact to one number so their thread always shows a single sender.
+  if (pool.length) {
+    options.push({
+      value: 'rotate',
+      label: `Rotate across all ${pool.length} numbers (recommended)`,
+      selected: true
+    });
+  }
+
+  // Individual numbers, for forcing a specific sender.
+  pool.forEach(did => {
+    options.push({ value: did, label: `FracTEL ${formatDid(did)}` });
+  });
+
   // Add BulkVS as disabled/grayed out
   if (bulkvsNumber) {
     options.push({ value: bulkvsNumber, label: `BulkVS (${bulkvsNumber}) - Disabled`, disabled: true });
   }
 
-  // Add ONLY the primary/default FracTEL number
-  options.push({ value: fractelDefault, label: `FracTEL (${fractelDefault})`, disabled: false });
-
   const renderOption = opt => {
     if (opt.disabled) {
       return `<option value="${opt.value}" disabled style="color: #666; background-color: #1a1d24;">${opt.label}</option>`;
-    } else {
-      return `<option value="${opt.value}" selected>${opt.label}</option>`;
     }
+    return `<option value="${opt.value}"${opt.selected ? ' selected' : ''}>${opt.label}</option>`;
   };
 
   // Populate composer sender select
