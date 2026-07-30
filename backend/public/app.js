@@ -24,6 +24,7 @@ let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
 let parsedLeads = []; // Phase 2: Parsed leads storage
+let senderOptionsHtml = ''; // Rendered sender <option> markup, shared by every sender dropdown
 let currentStatusFilter = 'responded'; // Status filter (responded/pending)
 let currentStageFilter = 'all'; // Stage filter (Stage 1/Stage 2/Stage 3/all)
 let fromDate = '';
@@ -448,11 +449,8 @@ window.addEventListener('DOMContentLoaded', () => {
     bulkMessageText.value = '';
     updateCharCounter(bulkMessageText, bulkCharCounter);
     
-    // Populate bulk sender options from active settings
-    const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
-      return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
-    }).join('');
-    bulkSenderSelect.innerHTML = composerOptions;
+    // Repopulate from the shared options so rotation stays the default.
+    bulkSenderSelect.innerHTML = senderOptionsHtml;
 
     bulkMessageModal.classList.add('open');
   });
@@ -522,11 +520,8 @@ window.addEventListener('DOMContentLoaded', () => {
       campaignMessageText.value = '';
       updateCharCounter(campaignMessageText, campaignCharCounter);
 
-      // Populate campaign bulk sender options
-      const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
-        return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
-      }).join('');
-      campaignBulkSenderSelect.innerHTML = composerOptions;
+      // Repopulate from the shared options so rotation stays the default.
+      campaignBulkSenderSelect.innerHTML = senderOptionsHtml;
 
       campaignModal.classList.add('open');
     });
@@ -672,31 +667,19 @@ function updateSenderDropdowns(settings) {
     return `<option value="${opt.value}"${opt.selected ? ' selected' : ''}>${opt.label}</option>`;
   };
 
-  // Populate composer sender select
-  if (composerSenderSelect) {
-    composerSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
+  // Shared by every sender dropdown, including the ones the campaign and bulk
+  // modals rebuild each time they open.
+  senderOptionsHtml = options.map(renderOption).join('');
 
-  // Populate campaign sender select
-  if (campaignSenderSelect) {
-    campaignSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate campaign bulk sender select
-  if (campaignBulkSenderSelect) {
-    campaignBulkSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate bulk sender select
-  if (bulkSenderSelect) {
-    bulkSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate test sender select
-  const testSenderSelect = document.getElementById('test-sender');
-  if (testSenderSelect) {
-    testSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
+  [
+    composerSenderSelect,
+    campaignSenderSelect,
+    campaignBulkSenderSelect,
+    bulkSenderSelect,
+    document.getElementById('test-sender')
+  ].forEach(select => {
+    if (select) select.innerHTML = senderOptionsHtml;
+  });
 
   // Update connection cards status in right panel
   updateGatewayStatusUI(settings);
