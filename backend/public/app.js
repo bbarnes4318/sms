@@ -1502,6 +1502,7 @@ function parseCSV(text) {
     let phoneIdx = headers.findIndex(h => /phone|number|num|tel|mobile/i.test(h));
     let nameIdx = headers.findIndex(h => /name|contact|lead/i.test(h));
     let cityIdx = headers.findIndex(h => /city/i.test(h));
+    let zipIdx = headers.findIndex(h => /zip|postal/i.test(h));
 
     // Fallbacks if headers don't match standard names
     if (phoneIdx === -1) {
@@ -1527,12 +1528,14 @@ function parseCSV(text) {
       const phone = rawPhone.replace(/[^\d+]/g, '');
       const name = nameIdx !== -1 && nameIdx < columns.length ? columns[nameIdx] : '';
       const city = cityIdx !== -1 && cityIdx < columns.length ? columns[cityIdx] : '';
+      const zip = zipIdx !== -1 && zipIdx < columns.length ? columns[zipIdx] : '';
 
       if (phone && phone.length >= 7) {
-        tempLeads.push({ 
-          phone_number: phone, 
-          name: name || null, 
-          city: city || null 
+        tempLeads.push({
+          phone_number: phone,
+          name: name || null,
+          city: city || null,
+          zip: zip || null
         });
       }
     }

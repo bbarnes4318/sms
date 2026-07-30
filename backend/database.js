@@ -10,13 +10,26 @@ const db = new Database(dbPath);
 // Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
 
-// FracTEL DIDs cleared for sending: all are SMS/MMS enabled and registered to
-// 10DLC campaign C6R7BB9, and all deliver inbound replies to /webhook/inbound.
+// FracTEL DIDs cleared for sending. Every number here was verified by an actual
+// send against the carrier, not just by its API attributes - see below.
+//
+// These four are provisioned identically in the FracTEL API (SMS/MMS enabled,
+// 10DLC campaign C6R7BB9, on-net, Local, tier X) yet the carrier rejects every
+// send from them with HTTP 400 "Message NOT sent":
+//     3213426066, 3213426074, 4072049626, 7272865079
+// The cause is not visible through the API and needs FracTEL support to clear.
+// Add them back here once they send successfully.
+//
+// Also excluded: 3212372724 and 4244204981, which are not attached to any 10DLC
+// campaign, so carriers filter their traffic.
+//
+// All ten numbers still point their inbound webhook at /webhook/inbound, so
+// replies keep reaching the app even for numbers we cannot currently send from.
 const FRACTEL_DID_POOL = [
-  '3213426066', '3213426074', '3215777735', '3215777754', '4072049626',
-  '6283888618', '6894658835', '7272865079', '7272882904', '8653456051'
+  '3215777735', '3215777754', '6283888618',
+  '6894658835', '7272882904', '8653456051'
 ];
-const FRACTEL_DID_POOL_VERSION = '2';
+const FRACTEL_DID_POOL_VERSION = '3';
 
 // Sentinel accepted in place of a from_number to request round-robin selection.
 const ROTATE_SENDER = 'rotate';
@@ -131,6 +144,13 @@ function initDatabase() {
   if (!hasCity) {
     db.prepare("ALTER TABLE conversations ADD COLUMN city TEXT").run();
     console.log("Database migration: Added 'city' column to conversations table.");
+  }
+
+  // Migration: Add zip column if not exists
+  const hasZip = tableInfo.some(column => column.name === 'zip');
+  if (!hasZip) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN zip TEXT").run();
+    console.log("Database migration: Added 'zip' column to conversations table.");
   }
 
   // Migration: Add assigned_did column. Holds the FracTEL number this contact
@@ -346,7 +366,7 @@ function getConversations() {
   `).all();
 }
 
-function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
+function getOrCreateConversation(phoneNumber, contactName = null, city = null, zip = null) {
   const cleanPhone = normalizePhoneNumber(phoneNumber);
   if (!cleanPhone) {
     throw new Error("Invalid phone number");
@@ -356,12 +376,13 @@ function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
   let conv = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(cleanPhone);
   if (!conv) {
     try {
-      const result = db.prepare('INSERT INTO conversations (phone_number, name, city) VALUES (?, ?, ?)').run(cleanPhone, contactName, city);
+      const result = db.prepare('INSERT INTO conversations (phone_number, name, city, zip) VALUES (?, ?, ?, ?)').run(cleanPhone, contactName, city, zip);
       conv = {
         id: result.lastInsertRowid,
         phone_number: cleanPhone,
         name: contactName,
         city: city,
+        zip: zip,
         last_message_text: null,
         last_message_at: null,
         created_at: new Date().toISOString()
@@ -385,6 +406,12 @@ function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
       conv.city = city;
       updateFields.push("city = ?");
       updateValues.push(city);
+      needsUpdate = true;
+    }
+    if (zip && conv.zip !== zip) {
+      conv.zip = zip;
+      updateFields.push("zip = ?");
+      updateValues.push(zip);
       needsUpdate = true;
     }
 
@@ -563,7 +590,7 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
     for (const lead of leadsList) {
       if (!lead.phone_number) continue;
       
-      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city);
+      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city, lead.zip);
       insertedConvs.push(conv);
 
       // Reset stage to Stage 1 upon re-import/new import
@@ -574,8 +601,10 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
         let body = messageTemplate;
         const nameVal = lead.name || '';
         const cityVal = lead.city || '';
+        const zipVal = lead.zip || '';
         body = body.replace(/\[Name\]/gi, nameVal);
         body = body.replace(/\[City\]/gi, cityVal);
+        body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
 
         const fromNum = resolveSenderNumber(conv.id, fromNumber);
 
@@ -645,8 +674,10 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
       let body = messageTemplate;
       const nameVal = conv.name || '';
       const cityVal = conv.city || '';
+      const zipVal = conv.zip || '';
       body = body.replace(/\[Name\]/gi, nameVal);
       body = body.replace(/\[City\]/gi, cityVal);
+      body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
 
       const fromNum = resolveSenderNumber(conv.id, fromNumber);
 

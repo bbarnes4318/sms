@@ -192,12 +192,12 @@ app.get('/api/conversations', (req, res) => {
 
 // 2. Create new conversation
 app.post('/api/conversations', (req, res) => {
-  const { phone_number, name } = req.body;
+  const { phone_number, name, city, zip } = req.body;
   if (!phone_number) {
     return res.status(400).json({ error: 'Phone number is required' });
   }
   try {
-    const conv = db.getOrCreateConversation(phone_number, name);
+    const conv = db.getOrCreateConversation(phone_number, name, city || null, zip || null);
     res.status(201).json(conv);
   } catch (err) {
     res.status(500).json({ error: err.message });
