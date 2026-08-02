@@ -7,6 +7,12 @@ dist/
 .vscode/
 *.log
 database.sqlite
-package-lock.json
 *.pyc
 __pycache__/
+
+# Test and CI artifacts
+tests/**/screenshots/
+test-results/
+playwright-report/
+*.sqlite-wal
+*.sqlite-shm

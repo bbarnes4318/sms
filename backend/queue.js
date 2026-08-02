@@ -118,6 +118,24 @@ class QueueWorker extends EventEmitter {
         return;
       }
 
+      // Last line of defence: the contact may have opted out after this
+      // message was queued, or while it waited on a future schedule.
+      const block = db.cancelIfSuppressed(msg);
+      if (block) {
+        this.emit('messageStatusChanged', {
+          id: msg.id,
+          status: 'failed',
+          error_message: `Blocked before send: ${block.label}`,
+          conversation_id: msg.conversation_id
+        });
+        // Move straight to the next message without burning the send interval.
+        this.timer = setTimeout(() => {
+          this.isProcessing = false;
+          this.processNext();
+        }, 50);
+        return;
+      }
+
       // Mark message as sending
       db.updateMessageStatus(msg.id, 'sending');
       this.emit('messageStatusChanged', { id: msg.id, status: 'sending', conversation_id: msg.conversation_id });

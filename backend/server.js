@@ -26,8 +26,71 @@ function getCookie(cookieString, name) {
   return match ? decodeURIComponent(match[2]) : null;
 }
 
+/* ------------------------------------------------------------------
+ * Request validation helpers
+ *
+ * TIME MODEL: every timestamp this application stores is UTC.
+ * SQLite datetime('now') is UTC. The browser sends scheduled times as a
+ * full ISO-8601 instant, which is converted to UTC here. The browser is
+ * the only place local time is rendered.
+ * ------------------------------------------------------------------ */
+
+// CSV imports post the whole parsed batch as JSON; the express default of
+// 100 kb silently rejected large lists.
+const JSON_BODY_LIMIT = '4mb';
+const MAX_MESSAGE_LENGTH = 1600;   // 10 SMS segments
+const MAX_LEADS_PER_UPLOAD = 20000;
+const MAX_BULK_RECIPIENTS = 20000;
+
+// Schedules must land inside a sane window; guards against typos like year 202.
+const MIN_SCHEDULE_MS = Date.UTC(2000, 0, 1);
+const MAX_SCHEDULE_AHEAD_MS = 5 * 365 * 24 * 60 * 60 * 1000;
+
+function parseConversationId(raw) {
+  if (!/^\d+$/.test(String(raw))) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * Validate a client-supplied schedule instant and normalise it to a UTC
+ * 'YYYY-MM-DD HH:MM:SS' string for storage.
+ */
+function validateScheduleInput(value, { allowPast = false } = {}) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return { ok: false, error: 'A date and time is required' };
+  }
+  const date = new Date(value);
+  if (isNaN(date.getTime())) {
+    return { ok: false, error: 'Invalid date and time' };
+  }
+  const ms = date.getTime();
+  if (ms < MIN_SCHEDULE_MS) {
+    return { ok: false, error: 'Date is before the earliest supported date (2000-01-01)' };
+  }
+  if (ms > Date.now() + MAX_SCHEDULE_AHEAD_MS) {
+    return { ok: false, error: 'Date is more than 5 years in the future' };
+  }
+  if (!allowPast && ms < Date.now() - 60000) {
+    return { ok: false, error: 'Date and time is in the past' };
+  }
+  return { ok: true, utc: date.toISOString().slice(0, 19).replace('T', ' ') };
+}
+
+function isIsoDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + 'T00:00:00Z');
+  return !isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// Never leak internals to the browser; log the detail server-side instead.
+function fail(res, status, publicMessage, err) {
+  if (err) console.error(`[error] ${publicMessage}:`, err.message);
+  return res.status(status).json({ error: publicMessage });
+}
 
 // Auth status (public check)
 app.get('/api/auth/status', (req, res) => {
@@ -245,15 +308,40 @@ app.post('/api/conversations/:id/read', (req, res) => {
 
 // 3.6. Set / clear a lead disposition
 app.post('/api/conversations/:id/disposition', (req, res) => {
-  const convId = parseInt(req.params.id, 10);
-  const { disposition, scheduled_at, note } = req.body;
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+
+  const { disposition, scheduled_at, note, allow_past } = req.body;
+  const wantsSchedule = disposition === 'appointment' || disposition === 'follow_up';
+
+  if (disposition !== null && disposition !== undefined &&
+      !db.VALID_DISPOSITIONS.includes(disposition)) {
+    return res.status(400).json({ error: `Invalid disposition: ${disposition}` });
+  }
+  if (typeof note === 'string' && note.length > 1000) {
+    return res.status(400).json({ error: 'Note exceeds 1000 characters' });
+  }
+
+  let utcSchedule = null;
+  if (wantsSchedule) {
+    // Past times are allowed only when the client explicitly asks, so that a
+    // missed appointment can be logged after the fact without a silent default.
+    const validation = validateScheduleInput(scheduled_at, { allowPast: allow_past === true });
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
+    }
+    utcSchedule = validation.utc;
+  }
 
   try {
     const updated = db.setConversationDisposition(
       convId,
       disposition || null,
-      scheduled_at || null,
-      note || null
+      utcSchedule,
+      note || null,
+      req.user && req.user.username
     );
     if (!updated) {
       return res.status(404).json({ error: 'Conversation not found' });
@@ -262,16 +350,76 @@ app.post('/api/conversations/:id/disposition', (req, res) => {
     broadcast('conversation_disposition', updated);
     res.json(updated);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    return fail(res, 400, err.message, err);
+  }
+});
+
+// 3.6b. Explicit re-opt-in. Deliberately separate from disposition changes so
+// that clearing a disposition can never resurrect a suppressed contact.
+app.post('/api/conversations/:id/opt-in', (req, res) => {
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+  if (req.body.confirm !== true) {
+    return res.status(400).json({
+      error: 'Re-opt-in requires explicit confirmation ({"confirm": true})'
+    });
+  }
+
+  try {
+    const actor = (req.user && req.user.username) || 'unknown';
+    const updated = db.recordOptIn(convId, actor);
+    if (!updated) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    broadcast('conversation_disposition', updated);
+    res.json(updated);
+  } catch (err) {
+    return fail(res, 400, err.message, err);
+  }
+});
+
+// 3.6c. Manually suppress a contact.
+app.post('/api/conversations/:id/opt-out', (req, res) => {
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+
+  try {
+    const actor = (req.user && req.user.username) || 'unknown';
+    const kind = req.body.kind === 'wrong_number' ? 'wrong_number' : 'opt_out';
+    const updated = kind === 'wrong_number'
+      ? db.recordWrongNumber(convId, { source: 'manual', text: req.body.reason || null, actor })
+      : db.recordOptOut(convId, { source: 'manual', text: req.body.reason || null, actor });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    broadcast('conversation_disposition', updated);
+    res.json(updated);
+  } catch (err) {
+    return fail(res, 400, err.message, err);
+  }
+});
+
+// 3.6d. Run the historical suppression backfill on demand.
+app.post('/api/admin/backfill-suppression', (req, res) => {
+  try {
+    const summary = db.backfillSuppression({ dryRun: req.body.dry_run === true });
+    console.log('[backfill] summary:', JSON.stringify(summary));
+    res.json(summary);
+  } catch (err) {
+    return fail(res, 500, 'Backfill failed', err);
   }
 });
 
 // 3.7. Performance stats for a date range
 app.get('/api/stats', (req, res) => {
-  const isDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
   const { from, to } = req.query;
 
-  if (!isDate(from) || !isDate(to)) {
+  if (!isIsoDate(from) || !isIsoDate(to)) {
     return res.status(400).json({ error: 'from and to are required as YYYY-MM-DD' });
   }
   if (from > to) {
@@ -287,15 +435,43 @@ app.get('/api/stats', (req, res) => {
 
 // 4. Queue a message (Outbound)
 app.post('/api/conversations/:id/messages', (req, res) => {
-  const convId = parseInt(req.params.id, 10);
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
   const { body, media_urls, scheduled_at, from_number } = req.body;
-  
+
+  if (typeof body === 'string' && body.length > MAX_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message body exceeds ${MAX_MESSAGE_LENGTH} characters` });
+  }
+  if (scheduled_at !== undefined && scheduled_at !== null && scheduled_at !== '') {
+    const validation = validateScheduleInput(scheduled_at, { allowPast: false });
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
+    }
+  }
+
   try {
     // Find conversation
     const conversations = db.getConversations();
     const conv = conversations.find(c => c.id === convId);
     if (!conv) {
       return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    // Hard suppression blocks even a deliberate one-to-one send. Business
+    // dispositions (No / Unqualified / Customer) do not — a human may still
+    // reply to someone they marked as a customer.
+    const block = db.getSuppressionBlock(conv, { scope: 'individual' });
+    if (block) {
+      db.logSuppressionEvent(convId, conv.phone_number, 'blocked_send', block.reason,
+                             'individual send rejected', req.user && req.user.username);
+      return res.status(409).json({
+        error: `Cannot message this contact: ${block.label}.`,
+        blocked: true,
+        reason: block.reason,
+        label: block.label
+      });
     }
 
     // Sticky rotation: reuses this contact's pinned DID, or claims the next one.
@@ -333,6 +509,12 @@ app.post('/api/leads/upload', (req, res) => {
   if (!leads || !Array.isArray(leads)) {
     return res.status(400).json({ error: 'Leads array is required' });
   }
+  if (leads.length > MAX_LEADS_PER_UPLOAD) {
+    return res.status(400).json({ error: `Too many leads in one upload (max ${MAX_LEADS_PER_UPLOAD})` });
+  }
+  if (message_template && message_template.length > MAX_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message template exceeds ${MAX_MESSAGE_LENGTH} characters` });
+  }
 
   try {
     const result = db.bulkImportLeads(leads, message_template || null, from_number || null);
@@ -349,12 +531,11 @@ app.post('/api/leads/upload', (req, res) => {
     // Update queue stats on dashboard
     broadcast('queue_status', db.getQueueStats());
 
-    res.json({
-      success: true,
-      imported_count: result.conversations.length,
-      queued_count: result.messages.length,
-      skipped_count: result.skipped.length
-    });
+    // Structured summary: `messages` and `skipped` are the raw arrays, the
+    // rest are the audited counts. imported_count is deliberately gone —
+    // it used to include contacts that were then skipped.
+    const { messages, skipped, ...counts } = result;
+    res.json({ success: true, ...counts, skipped });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -368,6 +549,12 @@ app.post('/api/conversations/bulk-message', (req, res) => {
   }
   if (!message_text) {
     return res.status(400).json({ error: 'message_text is required' });
+  }
+  if (conversation_ids.length > MAX_BULK_RECIPIENTS) {
+    return res.status(400).json({ error: `Too many recipients (max ${MAX_BULK_RECIPIENTS})` });
+  }
+  if (message_text.length > MAX_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} characters` });
   }
 
   try {
@@ -388,7 +575,11 @@ app.post('/api/conversations/bulk-message', (req, res) => {
     res.json({
       success: true,
       queued_count: messages.length,
-      skipped_count: skipped.length
+      skipped_count: skipped.length,
+      skipped_opted_out: skipped.filter(s => s.reason === 'opted_out').length,
+      skipped_wrong_number: skipped.filter(s => s.reason === 'wrong_number').length,
+      skipped_disposition: skipped.filter(s => String(s.reason).startsWith('disposition_')).length,
+      skipped: skipped
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -438,7 +629,11 @@ app.post('/api/campaigns', (req, res) => {
     res.json({
       success: true,
       queued_count: messages.length,
-      skipped_count: skipped.length
+      skipped_count: skipped.length,
+      skipped_opted_out: skipped.filter(s => s.reason === 'opted_out').length,
+      skipped_wrong_number: skipped.filter(s => s.reason === 'wrong_number').length,
+      skipped_disposition: skipped.filter(s => String(s.reason).startsWith('disposition_')).length,
+      skipped: skipped
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -592,8 +787,18 @@ app.post('/webhook/inbound', (req, res) => {
       const targetMsg = db.db.prepare('SELECT * FROM messages WHERE ref_id = ?').get(RefId);
       if (targetMsg) {
         if (status === 'DELIVRD') {
-          console.log(`Outbound message ${targetMsg.id} delivered.`);
+          // Real handset confirmation. Without this the stats can only report
+          // carrier acceptance, which is not the same thing.
+          db.recordDelivery(targetMsg.id, status);
+          console.log(`[dlr] message ${targetMsg.id} confirmed delivered.`);
+          broadcast('message_status', {
+            id: targetMsg.id,
+            status: 'sent',
+            delivered: true,
+            conversation_id: targetMsg.conversation_id
+          });
         } else if (status === 'UNDELIV' || status === 'REJECTD' || status === 'EXPIRED') {
+          db.recordCarrierStatus(targetMsg.id, status);
           const errorDetail = `Carrier delivery failed: ${status} (err: ${errCode || 'unknown'})`;
           db.updateMessageStatus(targetMsg.id, 'failed', RefId, errorDetail);
           

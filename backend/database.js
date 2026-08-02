@@ -2,9 +2,11 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const classification = require('./public/lib/classification');
 
-// Ensure database directory exists
-const dbPath = path.resolve(__dirname, 'database.sqlite');
+// SMS_DB_PATH lets tests point at a throwaway database. Production leaves it
+// unset and gets the file next to this module, exactly as before.
+const dbPath = process.env.SMS_DB_PATH || path.resolve(__dirname, 'database.sqlite');
 const db = new Database(dbPath);
 
 // Enable WAL mode for better performance
@@ -175,6 +177,83 @@ function initDatabase() {
     db.prepare("ALTER TABLE conversations ADD COLUMN assigned_did TEXT").run();
     console.log("Database migration: Added 'assigned_did' column to conversations table.");
   }
+
+  // Migration: permanent, auditable contact suppression.
+  //
+  // Suppression is stored, never inferred from the latest reply. A contact who
+  // texts STOP and then texts again later stays suppressed until someone runs
+  // the explicit re-opt-in workflow.
+  const suppressionColumns = [
+    // Reply classification of the most recent inbound message (display only).
+    ['reply_classification', "ALTER TABLE conversations ADD COLUMN reply_classification TEXT"],
+    // Hard suppression flag. 1 = do not contact.
+    ['opted_out', "ALTER TABLE conversations ADD COLUMN opted_out INTEGER NOT NULL DEFAULT 0"],
+    ['opted_out_at', "ALTER TABLE conversations ADD COLUMN opted_out_at TEXT"],
+    // 'inbound_keyword' | 'manual' | 'backfill' | 'import'
+    ['opt_out_source', "ALTER TABLE conversations ADD COLUMN opt_out_source TEXT"],
+    // Verbatim message that triggered it, kept for the audit trail.
+    ['opt_out_text', "ALTER TABLE conversations ADD COLUMN opt_out_text TEXT"],
+    ['opted_in_at', "ALTER TABLE conversations ADD COLUMN opted_in_at TEXT"],
+    ['opted_in_by', "ALTER TABLE conversations ADD COLUMN opted_in_by TEXT"],
+    ['wrong_number', "ALTER TABLE conversations ADD COLUMN wrong_number INTEGER NOT NULL DEFAULT 0"],
+    ['wrong_number_at', "ALTER TABLE conversations ADD COLUMN wrong_number_at TEXT"],
+    ['suppression_reason', "ALTER TABLE conversations ADD COLUMN suppression_reason TEXT"]
+  ];
+  suppressionColumns.forEach(([name, sql]) => {
+    if (!tableInfo.some(column => column.name === name)) {
+      db.prepare(sql).run();
+      console.log(`Database migration: Added '${name}' column to conversations table.`);
+    }
+  });
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_opted_out ON conversations(opted_out)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_wrong_number ON conversations(wrong_number)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_classification ON conversations(reply_classification)`).run();
+
+  // Migration: real carrier delivery receipts.
+  //
+  // The messages.status CHECK constraint cannot take a new value without
+  // rebuilding the table, so delivery is tracked alongside it. status='sent'
+  // means "carrier accepted"; delivered_at set means the carrier confirmed
+  // handset delivery via DLR.
+  const messageInfo = db.prepare("PRAGMA table_info(messages)").all();
+  const messageColumns = [
+    ['delivered_at', "ALTER TABLE messages ADD COLUMN delivered_at TEXT"],
+    ['carrier_status', "ALTER TABLE messages ADD COLUMN carrier_status TEXT"]
+  ];
+  messageColumns.forEach(([name, sql]) => {
+    if (!messageInfo.some(column => column.name === name)) {
+      db.prepare(sql).run();
+      console.log(`Database migration: Added '${name}' column to messages table.`);
+    }
+  });
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)`).run();
+
+  // Audit log for suppression decisions and blocked sends.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS suppression_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER,
+      phone_number TEXT,
+      event TEXT NOT NULL,
+      reason TEXT,
+      detail TEXT,
+      actor TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_suppression_events_conv ON suppression_events(conversation_id)`).run();
+
+  // Reminder delivery state, so a reminder fires once and survives restarts.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS reminder_state (
+      conversation_id INTEGER NOT NULL,
+      scheduled_at TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      notified_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (conversation_id, scheduled_at, tier)
+    )
+  `).run();
 
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
@@ -479,6 +558,20 @@ function insertMessage(msg) {
   // Auto-transition to responded substage if inbound reply
   if (msg.direction === 'inbound') {
     db.prepare("UPDATE conversations SET unread = 1 WHERE id = ?").run(msg.conversation_id);
+
+    // Classify the reply and persist suppression. recordOptOut is idempotent
+    // and first-wins, so a later message never overwrites an earlier opt-out,
+    // and a later non-opt-out message never clears one.
+    const replyClass = classification.classifyReply(msg.body);
+    db.prepare('UPDATE conversations SET reply_classification = ? WHERE id = ?')
+      .run(replyClass, msg.conversation_id);
+
+    if (replyClass === classification.CLASSIFICATIONS.OPT_OUT) {
+      recordOptOut(msg.conversation_id, { source: 'inbound_keyword', text: msg.body });
+    } else if (replyClass === classification.CLASSIFICATIONS.WRONG_NUMBER) {
+      recordWrongNumber(msg.conversation_id, { source: 'inbound_keyword', text: msg.body });
+    }
+
     const conv = db.prepare('SELECT stage FROM conversations WHERE id = ?').get(msg.conversation_id);
     if (conv) {
       let newStage = conv.stage;
@@ -557,15 +650,59 @@ function updateMessageStatus(id, status, refId = null, errorMessage = null) {
   }
 }
 
+/**
+ * Record a carrier delivery receipt. status='sent' only means the carrier
+ * accepted the message; this is the only signal that it reached a handset.
+ */
+function recordDelivery(messageId, carrierStatus) {
+  db.prepare(`
+    UPDATE messages
+    SET delivered_at = datetime('now'), carrier_status = ?
+    WHERE id = ?
+  `).run(carrierStatus || 'DELIVRD', messageId);
+}
+
+/** Record a non-delivery carrier status without claiming delivery. */
+function recordCarrierStatus(messageId, carrierStatus) {
+  db.prepare('UPDATE messages SET carrier_status = ? WHERE id = ?').run(carrierStatus, messageId);
+}
+
 // Queue functions
+//
+// A message can sit in the queue (or be future-scheduled) for a long time. If
+// the contact opts out in the meantime, the queued message must NOT go out, so
+// the queue re-checks suppression at dequeue time rather than trusting the
+// check performed when the row was created.
 function getNextQueuedMessage() {
   return db.prepare(`
-    SELECT * FROM messages 
-    WHERE status = 'queued' 
-    AND (scheduled_at IS NULL OR scheduled_at <= datetime('now', 'localtime'))
-    ORDER BY created_at ASC, id ASC 
+    SELECT * FROM messages
+    WHERE status = 'queued'
+    AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
+    ORDER BY created_at ASC, id ASC
     LIMIT 1
   `).get();
+}
+
+/**
+ * Cancel a queued message whose contact became suppressed after it was queued.
+ * Returns the block when the message was cancelled, or null when it may send.
+ */
+function cancelIfSuppressed(msg) {
+  if (!msg || msg.direction !== 'outbound') return null;
+
+  const block = getSuppressionBlock(msg.conversation_id, { scope: 'individual' });
+  if (!block) return null;
+
+  db.prepare(`
+    UPDATE messages
+    SET status = 'failed', error_message = ?
+    WHERE id = ?
+  `).run(`Blocked before send: ${block.label}`, msg.id);
+
+  logSuppressionEvent(msg.conversation_id, msg.to_number, 'blocked_send', block.reason,
+                      `queued message ${msg.id} cancelled at dequeue`, 'queue');
+  console.warn(`[suppression] queued message ${msg.id} cancelled: ${block.label}`);
+  return block;
 }
 
 function getQueueStats() {
@@ -586,75 +723,278 @@ function getQueueStats() {
   };
 }
 
-/* ------------------------------------------------------------------
- * Bulk-send suppression
+/* ==================================================================
+ * Contact suppression
  *
- * Nobody in these states may be reached by a campaign, a bulk message
- * or a CSV re-import. To message one of them, open the conversation
- * and send individually.
+ * Suppression is PERSISTED STATE, never inferred from the latest reply.
+ * A contact who texts STOP and then texts again next week is still
+ * suppressed. The only way out is the explicit re-opt-in workflow.
  *
- * The keyword lists mirror NEGATIVE_EXACT / NEGATIVE_PHRASES in
- * public/app.js — keep the two in sync.
- * ------------------------------------------------------------------ */
+ * Two independent axes:
+ *   - Legal/hard suppression: opted_out, wrong_number.
+ *   - Business disposition:   no, unqualified, customer.
+ * Both block bulk sending. Only the first blocks individual sending.
+ * ================================================================== */
+
+// Dispositions excluded from bulk sends. These are business decisions, not
+// legal opt-outs, so a human may still message them one to one.
 const BLOCKED_DISPOSITIONS = ['no', 'unqualified', 'customer'];
 
-const OPT_OUT_EXACT = [
-  'no', 'nope', 'nah', 'na', 'no thanks', 'no thank you', 'no thx', 'nope thanks',
-  'not interested', 'im not interested', 'i am not interested', 'no interest',
-  'stop', 'stopall', 'stop all', 'end', 'quit', 'cancel', 'unsubscribe',
-  'unsub', 'optout', 'opt out', 'revoke', 'remove', 'remove me', 'delete me',
-  'take me off', 'go away', 'leave me alone', 'fuck off', 'fuck you', 'f off',
-  'piss off', 'never', 'no way', 'pass', 'hard pass', 'wrong number'
-];
+const SUPPRESSION_REASONS = {
+  OPTED_OUT: 'opted_out',
+  WRONG_NUMBER: 'wrong_number',
+  DISPOSITION_NO: 'disposition_no',
+  DISPOSITION_UNQUALIFIED: 'disposition_unqualified',
+  DISPOSITION_CUSTOMER: 'disposition_customer',
+  MISSING: 'missing_conversation'
+};
 
-const OPT_OUT_PHRASES = [
-  'remove me from your list', 'remove me from the list', 'remove my number',
-  'take me off your list', 'take me off the list', 'take me off your',
-  'off your list', 'off of your list', 'delete my number',
-  'stop texting', 'stop messaging', 'stop contacting', 'stop calling',
-  'do not text', "don't text", 'do not contact', "don't contact",
-  'do not call', "don't call", 'not interested', 'no longer interested',
-  'unsubscribe', 'opt me out', 'fuck off', 'fuck you', 'leave me alone',
-  'quit texting', 'quit messaging', 'lose my number'
-];
+const SUPPRESSION_LABELS = {
+  opted_out: 'Opted out',
+  wrong_number: 'Wrong number',
+  disposition_no: 'Marked No',
+  disposition_unqualified: 'Marked Unqualified',
+  disposition_customer: 'Already a customer',
+  missing_conversation: 'Conversation not found'
+};
 
-function normalizeReplyText(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function isOptOutReply(text) {
-  const normalized = normalizeReplyText(text);
-  if (!normalized) return false;
-
-  if (OPT_OUT_EXACT.includes(normalized)) return true;
-  if (OPT_OUT_PHRASES.some(phrase => normalized.includes(phrase))) return true;
-
-  const words = normalized.split(' ');
-  return words.length <= 4 && OPT_OUT_EXACT.includes(words[0]);
-}
-
-function getLastInboundBody(conversationId) {
-  const row = db.prepare(`
-    SELECT body FROM messages
-    WHERE conversation_id = ? AND direction = 'inbound'
-    ORDER BY created_at DESC, id DESC
-    LIMIT 1
-  `).get(conversationId);
-  return row ? row.body : null;
-}
-
-// Returns a reason string when the contact must be skipped, otherwise null.
-function getBulkSendBlockReason(conv) {
-  if (!conv) return 'missing';
-  if (conv.disposition && BLOCKED_DISPOSITIONS.includes(conv.disposition)) {
-    return conv.disposition;
+function logSuppressionEvent(conversationId, phoneNumber, event, reason, detail, actor) {
+  try {
+    db.prepare(`
+      INSERT INTO suppression_events (conversation_id, phone_number, event, reason, detail, actor)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(conversationId || null, phoneNumber || null, event, reason || null,
+           detail ? String(detail).slice(0, 500) : null, actor || null);
+  } catch (err) {
+    // The audit log must never break a send path.
+    console.error('[suppression] failed to write audit event:', err.message);
   }
-  if (isOptOutReply(getLastInboundBody(conv.id))) return 'opted_out';
+}
+
+/**
+ * Record a permanent opt-out. Idempotent: the FIRST opt-out wins so the audit
+ * trail keeps the original message and timestamp.
+ */
+function recordOptOut(conversationId, { source = 'inbound_keyword', text = null, actor = null } = {}) {
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+  if (!conv) return null;
+  if (conv.opted_out) return conv; // already suppressed - do not overwrite
+
+  db.prepare(`
+    UPDATE conversations
+    SET opted_out = 1,
+        opted_out_at = datetime('now'),
+        opt_out_source = ?,
+        opt_out_text = ?,
+        suppression_reason = 'opted_out',
+        opted_in_at = NULL,
+        opted_in_by = NULL
+    WHERE id = ?
+  `).run(source, text ? String(text).slice(0, 500) : null, conversationId);
+
+  logSuppressionEvent(conversationId, conv.phone_number, 'opt_out', source, text, actor);
+  console.log(`[suppression] opt-out recorded for conversation ${conversationId} (source=${source})`);
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+}
+
+/** Flag a number as belonging to the wrong person. Idempotent. */
+function recordWrongNumber(conversationId, { source = 'inbound_keyword', text = null, actor = null } = {}) {
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+  if (!conv) return null;
+  if (conv.wrong_number) return conv;
+
+  db.prepare(`
+    UPDATE conversations
+    SET wrong_number = 1,
+        wrong_number_at = datetime('now'),
+        suppression_reason = COALESCE(suppression_reason, 'wrong_number')
+    WHERE id = ?
+  `).run(conversationId);
+
+  logSuppressionEvent(conversationId, conv.phone_number, 'wrong_number', source, text, actor);
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+}
+
+/**
+ * Explicit re-opt-in. This is the ONLY thing that clears an opt-out, and it
+ * requires a named actor. Nothing automatic ever calls this.
+ */
+function recordOptIn(conversationId, actor) {
+  if (!actor) throw new Error('Re-opt-in requires an actor');
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+  if (!conv) return null;
+
+  db.prepare(`
+    UPDATE conversations
+    SET opted_out = 0,
+        wrong_number = 0,
+        opted_in_at = datetime('now'),
+        opted_in_by = ?,
+        suppression_reason = NULL
+    WHERE id = ?
+  `).run(String(actor).slice(0, 120), conversationId);
+
+  logSuppressionEvent(conversationId, conv.phone_number, 'opt_in', 'manual',
+                      `previous opt-out: ${conv.opt_out_text || 'n/a'}`, actor);
+  console.log(`[suppression] re-opt-in for conversation ${conversationId} by ${actor}`);
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+}
+
+/**
+ * THE single suppression gate. Every outbound path calls this.
+ *
+ * @param {object|number} conversation  conversation row or id
+ * @param {object} options
+ *        options.scope 'individual' blocks only hard suppression;
+ *                      'bulk' (default) also blocks business dispositions.
+ * @returns {null|{reason, label, hard}}  null when sending is allowed
+ */
+function getSuppressionBlock(conversation, { scope = 'bulk' } = {}) {
+  const conv = typeof conversation === 'object' && conversation !== null
+    ? conversation
+    : db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversation);
+
+  if (!conv) {
+    return { reason: SUPPRESSION_REASONS.MISSING, label: SUPPRESSION_LABELS.missing_conversation, hard: true };
+  }
+
+  // Hard suppression applies to every path, including one-to-one sends.
+  if (conv.opted_out) {
+    return { reason: SUPPRESSION_REASONS.OPTED_OUT, label: SUPPRESSION_LABELS.opted_out, hard: true };
+  }
+  if (conv.wrong_number) {
+    return { reason: SUPPRESSION_REASONS.WRONG_NUMBER, label: SUPPRESSION_LABELS.wrong_number, hard: true };
+  }
+
+  if (scope === 'individual') return null;
+
+  if (conv.disposition && BLOCKED_DISPOSITIONS.includes(conv.disposition)) {
+    const reason = `disposition_${conv.disposition}`;
+    return { reason, label: SUPPRESSION_LABELS[reason], hard: false };
+  }
+
   return null;
+}
+
+/** Convenience wrapper used by the bulk paths. Returns a reason string or null. */
+function getBulkSendBlockReason(conv) {
+  const block = getSuppressionBlock(conv, { scope: 'bulk' });
+  return block ? block.reason : null;
+}
+
+/**
+ * Scan EVERY historical inbound message (not just the latest) and permanently
+ * suppress contacts who ever sent explicit opt-out language.
+ *
+ * Idempotent: contacts already opted out are left untouched so the original
+ * timestamp and message survive. A manual re-opt-in is also respected — if
+ * someone was deliberately opted back in after the opt-out, we do not undo it.
+ *
+ * A plain "No" is NOT treated as a legal opt-out here; it is counted under
+ * ambiguous so a human can decide.
+ */
+function backfillSuppression({ dryRun = false } = {}) {
+  const summary = {
+    conversations_scanned: 0,
+    inbound_messages_scanned: 0,
+    opt_outs_identified: 0,
+    wrong_numbers_identified: 0,
+    records_updated: 0,
+    already_suppressed: 0,
+    skipped_due_to_opt_in: 0,
+    ambiguous_left_for_review: 0,
+    dry_run: dryRun
+  };
+
+  const conversations = db.prepare('SELECT * FROM conversations').all();
+  summary.conversations_scanned = conversations.length;
+
+  const inboundStmt = db.prepare(`
+    SELECT id, body, created_at FROM messages
+    WHERE conversation_id = ? AND direction = 'inbound'
+    ORDER BY created_at ASC, id ASC
+  `);
+
+  const apply = db.transaction(() => {
+    for (const conv of conversations) {
+      const inbound = inboundStmt.all(conv.id);
+      summary.inbound_messages_scanned += inbound.length;
+
+      let firstOptOut = null;
+      let firstWrongNumber = null;
+      let sawNegative = false;
+
+      for (const msg of inbound) {
+        const cls = classification.classifyReply(msg.body);
+        if (cls === classification.CLASSIFICATIONS.OPT_OUT && !firstOptOut) {
+          firstOptOut = msg;
+        } else if (cls === classification.CLASSIFICATIONS.WRONG_NUMBER && !firstWrongNumber) {
+          firstWrongNumber = msg;
+        } else if (cls === classification.CLASSIFICATIONS.NEGATIVE) {
+          sawNegative = true;
+        }
+      }
+
+      if (firstOptOut) summary.opt_outs_identified++;
+      if (firstWrongNumber) summary.wrong_numbers_identified++;
+      if (!firstOptOut && !firstWrongNumber && sawNegative) summary.ambiguous_left_for_review++;
+
+      // Someone was explicitly opted back in after their opt-out; respect that.
+      if (conv.opted_in_at && conv.opted_in_by) {
+        if (firstOptOut || firstWrongNumber) summary.skipped_due_to_opt_in++;
+        continue;
+      }
+
+      if (conv.opted_out && firstOptOut) {
+        summary.already_suppressed++;
+        continue;
+      }
+
+      let updated = false;
+
+      if (firstOptOut && !conv.opted_out) {
+        if (!dryRun) {
+          db.prepare(`
+            UPDATE conversations
+            SET opted_out = 1,
+                opted_out_at = ?,
+                opt_out_source = 'backfill',
+                opt_out_text = ?,
+                suppression_reason = 'opted_out'
+            WHERE id = ?
+          `).run(firstOptOut.created_at, String(firstOptOut.body || '').slice(0, 500), conv.id);
+          logSuppressionEvent(conv.id, conv.phone_number, 'opt_out', 'backfill', firstOptOut.body, 'backfill');
+        }
+        updated = true;
+      }
+
+      if (firstWrongNumber && !conv.wrong_number) {
+        if (!dryRun) {
+          db.prepare(`
+            UPDATE conversations
+            SET wrong_number = 1,
+                wrong_number_at = ?,
+                suppression_reason = COALESCE(suppression_reason, 'wrong_number')
+            WHERE id = ?
+          `).run(firstWrongNumber.created_at, conv.id);
+          logSuppressionEvent(conv.id, conv.phone_number, 'wrong_number', 'backfill', firstWrongNumber.body, 'backfill');
+        }
+        updated = true;
+      }
+
+      // Keep the display classification in step with the newest reply.
+      if (!dryRun && inbound.length) {
+        const latest = inbound[inbound.length - 1];
+        db.prepare('UPDATE conversations SET reply_classification = ? WHERE id = ?')
+          .run(classification.classifyReply(latest.body), conv.id);
+      }
+
+      if (updated) summary.records_updated++;
+    }
+  });
+
+  apply();
+  return summary;
 }
 
 function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
@@ -671,22 +1011,76 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   `);
 
   const insertedMessages = [];
-  const insertedConvs = [];
   const skipped = [];
+  const result = {
+    total_submitted: 0,
+    new_contacts: 0,
+    existing_contacts: 0,
+    contacts_updated: 0,
+    invalid_rows: 0,
+    duplicate_rows: 0,
+    messages_queued: 0,
+    skipped_suppressed: 0,
+    skipped_opted_out: 0,
+    skipped_wrong_number: 0,
+    skipped_disposition: 0,
+    errors: []
+  };
+
+  const existsStmt = db.prepare('SELECT id FROM conversations WHERE phone_number = ?');
+  const seenPhones = new Set();
 
   const transaction = db.transaction((leadsList) => {
     for (const lead of leadsList) {
-      if (!lead.phone_number) continue;
+      result.total_submitted++;
 
-      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city, lead.zip);
-      insertedConvs.push(conv);
+      const normalized = normalizePhoneNumber(lead && lead.phone_number);
+      if (!normalized || normalized.replace(/\D/g, '').length < 10) {
+        result.invalid_rows++;
+        continue;
+      }
+      if (seenPhones.has(normalized)) {
+        result.duplicate_rows++;
+        continue;
+      }
+      seenPhones.add(normalized);
 
-      // Re-importing must not resurrect someone who opted out or was closed
+      // Distinguish genuinely new contacts from ones we already had, BEFORE
+      // the upsert. Previously every row counted as "imported", including
+      // rows that were then skipped.
+      const preexisting = existsStmt.get(normalized);
+
+      let conv;
+      try {
+        conv = getOrCreateConversation(normalized, lead.name, lead.city, lead.zip);
+      } catch (err) {
+        result.invalid_rows++;
+        result.errors.push({ phone_number: normalized, error: err.message });
+        continue;
+      }
+
+      if (preexisting) {
+        result.existing_contacts++;
+      } else {
+        result.new_contacts++;
+      }
+
+      // Re-importing must not resurrect someone who opted out or was closed.
+      // Note this runs BEFORE the stage reset, so a suppressed contact keeps
+      // whatever stage they already had.
       const blockReason = getBulkSendBlockReason(conv);
       if (blockReason) {
         skipped.push({ id: conv.id, phone_number: conv.phone_number, reason: blockReason });
+        result.skipped_suppressed++;
+        if (blockReason === 'opted_out') result.skipped_opted_out++;
+        else if (blockReason === 'wrong_number') result.skipped_wrong_number++;
+        else result.skipped_disposition++;
+        logSuppressionEvent(conv.id, conv.phone_number, 'blocked_send', blockReason,
+                            'csv import', 'import');
         continue;
       }
+
+      result.contacts_updated++;
 
       // Reset stage to Stage 1 upon re-import/new import
       db.prepare("UPDATE conversations SET stage = 'Stage 1' WHERE id = ?").run(conv.id);
@@ -720,7 +1114,9 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   });
 
   transaction(leads);
-  return { conversations: insertedConvs, messages: insertedMessages, skipped };
+  result.messages_queued = insertedMessages.length;
+  console.log('[import] summary:', JSON.stringify(result));
+  return { ...result, messages: insertedMessages, skipped };
 }
 
 function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
@@ -841,7 +1237,14 @@ function markConversationRead(id) {
 // passing null clears the disposition and returns the lead to the New tab.
 const VALID_DISPOSITIONS = ['appointment', 'follow_up', 'no', 'unqualified', 'customer'];
 
-function setConversationDisposition(id, disposition, scheduledAt = null, note = null) {
+/**
+ * Set or clear the business disposition.
+ *
+ * This NEVER touches opted_out / wrong_number. Clearing a disposition returns
+ * the lead to New for triage but leaves any legal suppression intact — undoing
+ * a "No" must not resurrect someone who texted STOP.
+ */
+function setConversationDisposition(id, disposition, scheduledAt = null, note = null, actor = null) {
   if (disposition !== null && !VALID_DISPOSITIONS.includes(disposition)) {
     throw new Error(`Invalid disposition: ${disposition}`);
   }
@@ -849,72 +1252,101 @@ function setConversationDisposition(id, disposition, scheduledAt = null, note = 
     throw new Error(`A date and time is required for the '${disposition}' disposition`);
   }
 
+  const existing = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+  if (!existing) return undefined;
+
   // Only the scheduled dispositions keep a date on the record
   const keepsSchedule = disposition === 'appointment' || disposition === 'follow_up';
+  const nextSchedule = keepsSchedule ? scheduledAt : null;
 
   db.prepare(`
     UPDATE conversations
     SET disposition = ?,
-        disposition_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', 'localtime') END,
+        disposition_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now') END,
         scheduled_at = ?,
         disposition_note = ?
     WHERE id = ?
-  `).run(
-    disposition,
-    disposition,
-    keepsSchedule ? scheduledAt : null,
-    note || null,
-    id
-  );
+  `).run(disposition, disposition, nextSchedule, note || null, id);
+
+  // Rescheduling or clearing invalidates any reminders already fired.
+  if (existing.scheduled_at && existing.scheduled_at !== nextSchedule) {
+    db.prepare('DELETE FROM reminder_state WHERE conversation_id = ? AND scheduled_at = ?')
+      .run(id, existing.scheduled_at);
+  }
+
+  console.log(`[disposition] conversation ${id}: ${existing.disposition || 'none'} -> ${disposition || 'none'}` +
+              `${nextSchedule ? ` @ ${nextSchedule}Z` : ''}${actor ? ` by ${actor}` : ''}`);
 
   return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
 }
 
-/* ------------------------------------------------------------------
- * Performance stats
+/**
+ * Performance stats for a UTC date range (inclusive, YYYY-MM-DD).
  *
- * All dates are naive local 'YYYY-MM-DD HH:MM:SS' strings, matching
- * datetime('now','localtime') used everywhere else, so date() works
- * directly without timezone conversion.
- * ------------------------------------------------------------------ */
+ * TERMINOLOGY — these names match what the carrier data actually supports,
+ * and the UI must not rename them:
+ *
+ *   attempted        outbound rows created in the window
+ *   carrier_accepted status='sent' — the carrier took the message. This is
+ *                    NOT proof of handset delivery.
+ *   delivered        a carrier delivery receipt confirmed handset delivery
+ *                    (delivered_at set). Only DLR-capable routes report this.
+ *   failed           carrier rejected, or a DLR reported UNDELIV/REJECTD/EXPIRED
+ *   queued           still waiting in the send queue
+ *   unknown_delivery carrier-accepted but no DLR ever arrived
+ *
+ * Every rate documents its denominator in `rate_definitions`.
+ */
 function getStats(fromDate, toDate) {
   const range = [fromDate, toDate];
 
-  // Outbound volume and delivery outcome
   const outbound = db.prepare(`
     SELECT
       COUNT(*) as attempted,
-      SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as delivered,
+      SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as carrier_accepted,
+      SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) as delivered,
       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-      SUM(CASE WHEN status IN ('queued', 'sending') THEN 1 ELSE 0 END) as in_flight,
+      SUM(CASE WHEN status IN ('queued', 'sending') THEN 1 ELSE 0 END) as queued,
       COUNT(DISTINCT conversation_id) as contacts_reached
     FROM messages
     WHERE direction = 'outbound' AND date(created_at) BETWEEN ? AND ?
   `).get(...range);
 
-  // Inbound replies, classified in JS so the keyword list stays in one place
+  // Contacts actually handed to a carrier: the only defensible denominator for
+  // a reply rate. Someone whose message is still queued has had no chance to reply.
+  const contactsAccepted = db.prepare(`
+    SELECT COUNT(DISTINCT conversation_id) as c
+    FROM messages
+    WHERE direction = 'outbound' AND status = 'sent' AND date(created_at) BETWEEN ? AND ?
+  `).get(...range).c || 0;
+
+  // Inbound replies, classified through the single canonical module.
   const inboundRows = db.prepare(`
     SELECT conversation_id, body
     FROM messages
     WHERE direction = 'inbound' AND date(created_at) BETWEEN ? AND ?
   `).all(...range);
 
-  let positive = 0;
-  let negative = 0;
+  const messageCounts = { positive: 0, negative: 0, opt_out: 0, wrong_number: 0, unknown: 0 };
   const responders = new Set();
-  const positiveResponders = new Set();
+  // Each contact counted once, under their strongest signal, so one chatty
+  // lead cannot inflate the positive count.
+  const contactBest = new Map();
+  const RANK = { opt_out: 4, wrong_number: 3, negative: 2, positive: 1, unknown: 0 };
 
   inboundRows.forEach(row => {
     responders.add(row.conversation_id);
-    if (isOptOutReply(row.body)) {
-      negative++;
-    } else {
-      positive++;
-      positiveResponders.add(row.conversation_id);
+    const cls = classification.classifyReply(row.body);
+    messageCounts[cls]++;
+    const current = contactBest.get(row.conversation_id);
+    if (!current || RANK[cls] > RANK[current]) {
+      contactBest.set(row.conversation_id, cls);
     }
   });
 
-  // Daily series for the chart
+  const uniqueCounts = { positive: 0, negative: 0, opt_out: 0, wrong_number: 0, unknown: 0 };
+  contactBest.forEach(cls => { uniqueCounts[cls]++; });
+
   const daily = db.prepare(`
     SELECT
       date(created_at) as day,
@@ -927,7 +1359,6 @@ function getStats(fromDate, toDate) {
     ORDER BY day ASC
   `).all(...range);
 
-  // Dispositions applied during the window
   const dispositionRows = db.prepare(`
     SELECT disposition, COUNT(*) as count
     FROM conversations
@@ -940,26 +1371,33 @@ function getStats(fromDate, toDate) {
     if (row.disposition in dispositions) dispositions[row.disposition] = row.count;
   });
 
-  // New contacts first created in the window
   const newLeads = db.prepare(`
     SELECT COUNT(*) as count FROM conversations WHERE date(created_at) BETWEEN ? AND ?
   `).get(...range).count;
 
-  // Average minutes between our last outbound and their reply
+  const suppression = db.prepare(`
+    SELECT
+      SUM(CASE WHEN date(opted_out_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) as opt_outs,
+      SUM(CASE WHEN date(wrong_number_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) as wrong_numbers
+    FROM conversations
+  `).get(fromDate, toDate, fromDate, toDate);
+
+  // Minutes between our last outbound and their reply. Negative gaps are
+  // impossible by construction, but the guard stops a clock change from
+  // poisoning the average.
   const replyLag = db.prepare(`
-    SELECT AVG(
-      (julianday(m.created_at) - julianday((
+    SELECT AVG(gap) as avg_minutes FROM (
+      SELECT (julianday(m.created_at) - julianday((
         SELECT MAX(o.created_at) FROM messages o
         WHERE o.conversation_id = m.conversation_id
           AND o.direction = 'outbound'
           AND o.created_at < m.created_at
-      ))) * 1440
-    ) as avg_minutes
-    FROM messages m
-    WHERE m.direction = 'inbound' AND date(m.created_at) BETWEEN ? AND ?
+      ))) * 1440 as gap
+      FROM messages m
+      WHERE m.direction = 'inbound' AND date(m.created_at) BETWEEN ? AND ?
+    ) WHERE gap IS NOT NULL AND gap >= 0
   `).get(...range).avg_minutes;
 
-  // Hour of day that draws the most replies
   const peakHour = db.prepare(`
     SELECT strftime('%H', created_at) as hour, COUNT(*) as count
     FROM messages
@@ -970,8 +1408,9 @@ function getStats(fromDate, toDate) {
   `).get(...range);
 
   const attempted = outbound.attempted || 0;
+  const carrierAccepted = outbound.carrier_accepted || 0;
   const delivered = outbound.delivered || 0;
-  const responses = inboundRows.length;
+  const failed = outbound.failed || 0;
 
   const rate = (numerator, denominator) =>
     denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
@@ -981,28 +1420,54 @@ function getStats(fromDate, toDate) {
     to: toDate,
     sent: {
       attempted,
+      carrier_accepted: carrierAccepted,
       delivered,
-      failed: outbound.failed || 0,
-      in_flight: outbound.in_flight || 0,
+      unknown_delivery: Math.max(0, carrierAccepted - delivered),
+      failed,
+      queued: outbound.queued || 0,
       contacts_reached: outbound.contacts_reached || 0,
-      delivery_rate: rate(delivered, delivered + (outbound.failed || 0))
+      contacts_accepted: contactsAccepted,
+      acceptance_rate: rate(carrierAccepted, carrierAccepted + failed),
+      confirmed_delivery_rate: rate(delivered, carrierAccepted)
     },
     responses: {
-      total: responses,
+      total_messages: inboundRows.length,
       unique_responders: responders.size,
-      positive,
-      negative,
-      positive_responders: positiveResponders.size,
-      response_rate: rate(responders.size, outbound.contacts_reached || 0),
-      positive_rate_of_replies: rate(positive, responses),
-      positive_rate_of_sent: rate(positiveResponders.size, outbound.contacts_reached || 0),
-      negative_rate_of_replies: rate(negative, responses)
+      positive_messages: messageCounts.positive,
+      negative_messages: messageCounts.negative,
+      opt_out_messages: messageCounts.opt_out,
+      wrong_number_messages: messageCounts.wrong_number,
+      unknown_messages: messageCounts.unknown,
+      positive_contacts: uniqueCounts.positive,
+      negative_contacts: uniqueCounts.negative,
+      opt_out_contacts: uniqueCounts.opt_out,
+      wrong_number_contacts: uniqueCounts.wrong_number,
+      unknown_contacts: uniqueCounts.unknown,
+      response_rate: rate(responders.size, contactsAccepted),
+      positive_rate_of_responders: rate(uniqueCounts.positive, responders.size),
+      positive_rate_of_contacted: rate(uniqueCounts.positive, contactsAccepted),
+      negative_rate_of_responders: rate(uniqueCounts.negative, responders.size),
+      opt_out_rate_of_contacted: rate(uniqueCounts.opt_out, contactsAccepted)
+    },
+    suppression: {
+      opt_outs_recorded: suppression.opt_outs || 0,
+      wrong_numbers_recorded: suppression.wrong_numbers || 0
     },
     dispositions,
     new_leads: newLeads,
-    avg_reply_minutes: replyLag === null ? null : Math.round(replyLag),
+    avg_reply_minutes: replyLag === null || replyLag === undefined ? null : Math.round(replyLag),
     peak_reply_hour: peakHour ? parseInt(peakHour.hour, 10) : null,
-    daily
+    daily,
+    // Rendered as tooltips so no metric on screen is ambiguous.
+    rate_definitions: {
+      acceptance_rate: 'Carrier-accepted / (carrier-accepted + failed) messages',
+      confirmed_delivery_rate: 'Messages with a carrier delivery receipt / carrier-accepted messages',
+      response_rate: 'Unique contacts who replied / unique contacts whose message the carrier accepted',
+      positive_rate_of_responders: 'Contacts whose strongest reply was positive / unique contacts who replied',
+      positive_rate_of_contacted: 'Contacts whose strongest reply was positive / unique contacts whose message the carrier accepted',
+      negative_rate_of_responders: 'Contacts whose strongest reply was negative / unique contacts who replied',
+      opt_out_rate_of_contacted: 'Contacts who opted out / unique contacts whose message the carrier accepted'
+    }
   };
 }
 
@@ -1089,8 +1554,20 @@ module.exports = {
   setConversationDisposition,
   VALID_DISPOSITIONS,
   BLOCKED_DISPOSITIONS,
-  isOptOutReply,
+  classifyReply: classification.classifyReply,
+  CLASSIFICATIONS: classification.CLASSIFICATIONS,
   getBulkSendBlockReason,
+  getSuppressionBlock,
+  recordOptOut,
+  recordWrongNumber,
+  recordOptIn,
+  logSuppressionEvent,
+  backfillSuppression,
+  cancelIfSuppressed,
+  recordDelivery,
+  recordCarrierStatus,
+  SUPPRESSION_REASONS,
+  SUPPRESSION_LABELS,
   getStats,
   countUsers,
   createUser,
