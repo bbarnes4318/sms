@@ -133,6 +133,7 @@ let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
 let parsedLeads = []; // Phase 2: Parsed leads storage
+let senderOptionsHtml = ''; // Rendered sender <option> markup, shared by every sender dropdown
 let currentFolder = 'new'; // Sidebar folder (new/hot/customer/closed/pending/storm-demo)
 let currentView = 'new';   // Active view within that folder
 let pendingDisposition = null; // Disposition awaiting a date/time from the schedule modal
@@ -566,11 +567,8 @@ window.addEventListener('DOMContentLoaded', () => {
     bulkMessageText.value = '';
     updateCharCounter(bulkMessageText, bulkCharCounter);
     
-    // Populate bulk sender options from active settings
-    const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
-      return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
-    }).join('');
-    bulkSenderSelect.innerHTML = composerOptions;
+    // Repopulate from the shared options so rotation stays the default.
+    bulkSenderSelect.innerHTML = senderOptionsHtml;
 
     bulkMessageModal.classList.add('open');
   });
@@ -640,11 +638,8 @@ window.addEventListener('DOMContentLoaded', () => {
       campaignMessageText.value = '';
       updateCharCounter(campaignMessageText, campaignCharCounter);
 
-      // Populate campaign bulk sender options
-      const composerOptions = Array.from(composerSenderSelect.options).map(opt => {
-        return `<option value="${opt.value}" ${opt.disabled ? 'disabled style="color: #666; background-color: #1a1d24;"' : 'selected'}>${opt.text}</option>`;
-      }).join('');
-      campaignBulkSenderSelect.innerHTML = composerOptions;
+      // Repopulate from the shared options so rotation stays the default.
+      campaignBulkSenderSelect.innerHTML = senderOptionsHtml;
 
       campaignModal.classList.add('open');
     });
@@ -831,53 +826,62 @@ async function loadConversations() {
   }
 }
 
+function formatDid(did) {
+  const d = (did || '').replace(/[^\d]/g, '');
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : did;
+}
+
 function updateSenderDropdowns(settings) {
   const bulkvsNumber = settings.sender_number || '+18887885527';
-  const fractelDefault = settings.fractel_sender_number || '8653456051';
+
+  // The DIDs cleared for sending, in rotation order.
+  const pool = (settings.fractel_enabled_dids || '')
+    .split(',')
+    .map(d => d.trim().replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, ''))
+    .filter(d => d.length === 10);
 
   const options = [];
-  
+
+  // Rotation is the default: spreads sends across the pool, but pins each
+  // contact to one number so their thread always shows a single sender.
+  if (pool.length) {
+    options.push({
+      value: 'rotate',
+      label: `Rotate across all ${pool.length} numbers (recommended)`,
+      selected: true
+    });
+  }
+
+  // Individual numbers, for forcing a specific sender.
+  pool.forEach(did => {
+    options.push({ value: did, label: `FracTEL ${formatDid(did)}` });
+  });
+
   // Add BulkVS as disabled/grayed out
   if (bulkvsNumber) {
     options.push({ value: bulkvsNumber, label: `BulkVS (${bulkvsNumber}) - Disabled`, disabled: true });
   }
 
-  // Add ONLY the primary/default FracTEL number
-  options.push({ value: fractelDefault, label: `FracTEL (${fractelDefault})`, disabled: false });
-
   const renderOption = opt => {
     if (opt.disabled) {
       return `<option value="${opt.value}" disabled style="color: #666; background-color: #1a1d24;">${opt.label}</option>`;
-    } else {
-      return `<option value="${opt.value}" selected>${opt.label}</option>`;
     }
+    return `<option value="${opt.value}"${opt.selected ? ' selected' : ''}>${opt.label}</option>`;
   };
 
-  // Populate composer sender select
-  if (composerSenderSelect) {
-    composerSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
+  // Shared by every sender dropdown, including the ones the campaign and bulk
+  // modals rebuild each time they open.
+  senderOptionsHtml = options.map(renderOption).join('');
 
-  // Populate campaign sender select
-  if (campaignSenderSelect) {
-    campaignSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate campaign bulk sender select
-  if (campaignBulkSenderSelect) {
-    campaignBulkSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate bulk sender select
-  if (bulkSenderSelect) {
-    bulkSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
-
-  // Populate test sender select
-  const testSenderSelect = document.getElementById('test-sender');
-  if (testSenderSelect) {
-    testSenderSelect.innerHTML = options.map(renderOption).join('');
-  }
+  [
+    composerSenderSelect,
+    campaignSenderSelect,
+    campaignBulkSenderSelect,
+    bulkSenderSelect,
+    document.getElementById('test-sender')
+  ].forEach(select => {
+    if (select) select.innerHTML = senderOptionsHtml;
+  });
 
   // Update connection cards status in right panel
   updateGatewayStatusUI(settings);
@@ -2453,6 +2457,7 @@ function parseCSV(text) {
     let phoneIdx = headers.findIndex(h => /phone|number|num|tel|mobile/i.test(h));
     let nameIdx = headers.findIndex(h => /name|contact|lead/i.test(h));
     let cityIdx = headers.findIndex(h => /city/i.test(h));
+    let zipIdx = headers.findIndex(h => /zip|postal/i.test(h));
 
     // Fallbacks if headers don't match standard names
     if (phoneIdx === -1) {
@@ -2478,12 +2483,14 @@ function parseCSV(text) {
       const phone = rawPhone.replace(/[^\d+]/g, '');
       const name = nameIdx !== -1 && nameIdx < columns.length ? columns[nameIdx] : '';
       const city = cityIdx !== -1 && cityIdx < columns.length ? columns[cityIdx] : '';
+      const zip = zipIdx !== -1 && zipIdx < columns.length ? columns[zipIdx] : '';
 
       if (phone && phone.length >= 7) {
-        tempLeads.push({ 
-          phone_number: phone, 
-          name: name || null, 
-          city: city || null 
+        tempLeads.push({
+          phone_number: phone,
+          name: name || null,
+          city: city || null,
+          zip: zip || null
         });
       }
     }

@@ -10,6 +10,30 @@ const db = new Database(dbPath);
 // Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
 
+// FracTEL DIDs cleared for sending. Every number here was verified by an actual
+// send against the carrier, not just by its API attributes - see below.
+//
+// These four are provisioned identically in the FracTEL API (SMS/MMS enabled,
+// 10DLC campaign C6R7BB9, on-net, Local, tier X) yet the carrier rejects every
+// send from them with HTTP 400 "Message NOT sent":
+//     3213426066, 3213426074, 4072049626, 7272865079
+// The cause is not visible through the API and needs FracTEL support to clear.
+// Add them back here once they send successfully.
+//
+// Also excluded: 3212372724 and 4244204981, which are not attached to any 10DLC
+// campaign, so carriers filter their traffic.
+//
+// All ten numbers still point their inbound webhook at /webhook/inbound, so
+// replies keep reaching the app even for numbers we cannot currently send from.
+const FRACTEL_DID_POOL = [
+  '3215777735', '3215777754', '6283888618',
+  '6894658835', '7272882904', '8653456051'
+];
+const FRACTEL_DID_POOL_VERSION = '3';
+
+// Sentinel accepted in place of a from_number to request round-robin selection.
+const ROTATE_SENDER = 'rotate';
+
 // Initialize database schema
 function initDatabase() {
   // Create tables
@@ -83,7 +107,21 @@ function initDatabase() {
   insertSetting.run('fractel_password', '');
   insertSetting.run('fractel_sender_number', '8653456051');
   insertSetting.run('fractel_brand_id', 'B7PS8UH');
-  insertSetting.run('fractel_enabled_dids', '3212372724,3215777735,3215777754,4072049626,4244204981,6283888618,6894658835,7272865079,7272882904,8653456051');
+  insertSetting.run('fractel_enabled_dids', FRACTEL_DID_POOL.join(','));
+  insertSetting.run('fractel_rotation_index', '0');
+
+  // Migration: force the DID pool to the vetted rotation set. 3212372724 and
+  // 4244204981 were dropped because they are not attached to 10DLC campaign
+  // C6R7BB9, so carriers filter traffic sent from them.
+  const didPoolVersion = db.prepare("SELECT value FROM settings WHERE key = 'fractel_did_pool_version'").get();
+  if (!didPoolVersion || didPoolVersion.value !== FRACTEL_DID_POOL_VERSION) {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'fractel_enabled_dids'").run(FRACTEL_DID_POOL.join(','));
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('fractel_did_pool_version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(FRACTEL_DID_POOL_VERSION);
+    console.log(`Database migration: FracTEL DID rotation pool set to ${FRACTEL_DID_POOL.length} numbers.`);
+  }
 
   // Migration: Add stage column if not exists
   const tableInfo = db.prepare("PRAGMA table_info(conversations)").all();
@@ -122,6 +160,21 @@ function initDatabase() {
     }
   });
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_disposition ON conversations(disposition)`).run();
+
+  // Migration: Add zip column if not exists
+  const hasZip = tableInfo.some(column => column.name === 'zip');
+  if (!hasZip) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN zip TEXT").run();
+    console.log("Database migration: Added 'zip' column to conversations table.");
+  }
+
+  // Migration: Add assigned_did column. Holds the FracTEL number this contact
+  // is pinned to, so every message in a thread comes from the same sender.
+  const hasAssignedDid = tableInfo.some(column => column.name === 'assigned_did');
+  if (!hasAssignedDid) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN assigned_did TEXT").run();
+    console.log("Database migration: Added 'assigned_did' column to conversations table.");
+  }
 
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
@@ -234,6 +287,86 @@ function updateSettings(settingsObj) {
   return getSettings();
 }
 
+// Strip a phone number down to the bare 10-digit form FracTEL expects.
+function toDidFormat(value) {
+  let cleaned = (value || '').toString().replace(/[^\d]/g, '');
+  if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    cleaned = cleaned.substring(1);
+  }
+  return cleaned;
+}
+
+// The DIDs currently cleared for outbound sending, in rotation order.
+function getFractelDidPool() {
+  const settings = getSettings();
+  return (settings.fractel_enabled_dids || '')
+    .split(',')
+    .map(toDidFormat)
+    .filter(did => did.length === 10);
+}
+
+// Advance the round-robin cursor and hand back the next DID. The read and the
+// write share one transaction so concurrent sends can't land on the same number.
+const nextRotatingDid = db.transaction((pool) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'fractel_rotation_index'").get();
+  const index = parseInt(row && row.value, 10) || 0;
+  const did = pool[index % pool.length];
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES ('fractel_rotation_index', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(String((index + 1) % 1000000));
+  return did;
+});
+
+function setConversationDid(conversationId, did) {
+  db.prepare('UPDATE conversations SET assigned_did = ? WHERE id = ?').run(did, conversationId);
+}
+
+/**
+ * Decide which number a message to `conversationId` goes out from.
+ *
+ * Rotation is sticky per contact rather than per message: the first outbound
+ * message claims the next DID in the pool and pins it to the conversation, and
+ * every later message reuses it. A contact therefore always sees one sender,
+ * while the pool spreads volume across all numbers.
+ *
+ * Passing an explicit number overrides rotation and re-pins the conversation.
+ */
+function resolveSenderNumber(conversationId, requested) {
+  const settings = getSettings();
+  const pool = getFractelDidPool();
+  const requestedStr = (requested || '').toString().trim();
+  const wantsRotation = !requestedStr || requestedStr.toLowerCase() === ROTATE_SENDER;
+
+  if (!wantsRotation) {
+    const explicit = toDidFormat(requestedStr);
+    if (explicit.length === 10) {
+      if (conversationId) setConversationDid(conversationId, explicit);
+      return explicit;
+    }
+    // Not a US 10-digit number (e.g. the legacy BulkVS sender) - pass through.
+    return requestedStr;
+  }
+
+  if (!pool.length) {
+    return toDidFormat(settings.fractel_sender_number) || settings.sender_number || '';
+  }
+
+  if (conversationId) {
+    const row = db.prepare('SELECT assigned_did FROM conversations WHERE id = ?').get(conversationId);
+    const existing = row && row.assigned_did;
+    // Only reuse a pinned DID that is still in the pool; a retired number
+    // falls through to rotation instead of failing to send.
+    if (existing && pool.includes(existing)) {
+      return existing;
+    }
+  }
+
+  const did = nextRotatingDid(pool);
+  if (conversationId) setConversationDid(conversationId, did);
+  return did;
+}
+
 function getConversations() {
   return db.prepare(`
     SELECT c.*,
@@ -249,7 +382,7 @@ function getConversations() {
   `).all();
 }
 
-function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
+function getOrCreateConversation(phoneNumber, contactName = null, city = null, zip = null) {
   const cleanPhone = normalizePhoneNumber(phoneNumber);
   if (!cleanPhone) {
     throw new Error("Invalid phone number");
@@ -259,12 +392,13 @@ function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
   let conv = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(cleanPhone);
   if (!conv) {
     try {
-      const result = db.prepare('INSERT INTO conversations (phone_number, name, city) VALUES (?, ?, ?)').run(cleanPhone, contactName, city);
+      const result = db.prepare('INSERT INTO conversations (phone_number, name, city, zip) VALUES (?, ?, ?, ?)').run(cleanPhone, contactName, city, zip);
       conv = {
         id: result.lastInsertRowid,
         phone_number: cleanPhone,
         name: contactName,
         city: city,
+        zip: zip,
         last_message_text: null,
         last_message_at: null,
         created_at: new Date().toISOString()
@@ -288,6 +422,12 @@ function getOrCreateConversation(phoneNumber, contactName = null, city = null) {
       conv.city = city;
       updateFields.push("city = ?");
       updateValues.push(city);
+      needsUpdate = true;
+    }
+    if (zip && conv.zip !== zip) {
+      conv.zip = zip;
+      updateFields.push("zip = ?");
+      updateValues.push(zip);
       needsUpdate = true;
     }
 
@@ -518,9 +658,6 @@ function getBulkSendBlockReason(conv) {
 }
 
 function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
-  const settings = getSettings();
-  const fromNum = fromNumber || settings.sender_number || '+18887885527';
-  
   const insertMessageStmt = db.prepare(`
     INSERT INTO messages (
       conversation_id, direction, from_number, to_number, body, status
@@ -541,7 +678,7 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
     for (const lead of leadsList) {
       if (!lead.phone_number) continue;
 
-      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city);
+      const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city, lead.zip);
       insertedConvs.push(conv);
 
       // Re-importing must not resurrect someone who opted out or was closed
@@ -559,9 +696,13 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
         let body = messageTemplate;
         const nameVal = lead.name || '';
         const cityVal = lead.city || '';
+        const zipVal = lead.zip || '';
         body = body.replace(/\[Name\]/gi, nameVal);
         body = body.replace(/\[City\]/gi, cityVal);
-        
+        body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
+
+        const fromNum = resolveSenderNumber(conv.id, fromNumber);
+
         const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
         insertedMessages.push({
           id: result.lastInsertRowid,
@@ -583,9 +724,6 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
 }
 
 function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
-  const settings = getSettings();
-  const fromNum = fromNumber || settings.sender_number || '+18887885527';
-  
   const insertMessageStmt = db.prepare(`
     INSERT INTO messages (
       conversation_id, direction, from_number, to_number, body, status
@@ -639,9 +777,13 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
       let body = messageTemplate;
       const nameVal = conv.name || '';
       const cityVal = conv.city || '';
+      const zipVal = conv.zip || '';
       body = body.replace(/\[Name\]/gi, nameVal);
       body = body.replace(/\[City\]/gi, cityVal);
-      
+      body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
+
+      const fromNum = resolveSenderNumber(conv.id, fromNumber);
+
       const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
       insertedMessages.push({
         id: result.lastInsertRowid,
@@ -931,6 +1073,9 @@ module.exports = {
   updateSettings,
   getConversations,
   getOrCreateConversation,
+  getFractelDidPool,
+  resolveSenderNumber,
+  setConversationDid,
   getMessages,
   insertMessage,
   updateMessageStatus,

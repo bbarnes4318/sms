@@ -192,12 +192,12 @@ app.get('/api/conversations', (req, res) => {
 
 // 2. Create new conversation
 app.post('/api/conversations', (req, res) => {
-  const { phone_number, name } = req.body;
+  const { phone_number, name, city, zip } = req.body;
   if (!phone_number) {
     return res.status(400).json({ error: 'Phone number is required' });
   }
   try {
-    const conv = db.getOrCreateConversation(phone_number, name);
+    const conv = db.getOrCreateConversation(phone_number, name, city || null, zip || null);
     res.status(201).json(conv);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -298,8 +298,8 @@ app.post('/api/conversations/:id/messages', (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    const settings = db.getSettings();
-    const fromNum = from_number || settings.sender_number || '+18887885527';
+    // Sticky rotation: reuses this contact's pinned DID, or claims the next one.
+    const fromNum = db.resolveSenderNumber(convId, from_number);
 
     const msgData = {
       conversation_id: convId,
@@ -615,6 +615,15 @@ app.post('/webhook/inbound', (req, res) => {
     // Create/get conversation for sender
     // Normalize From number to database format
     const conv = db.getOrCreateConversation(From);
+
+    // Pin the conversation to whichever of our DIDs they texted, so our reply
+    // goes back from the number already showing in their thread.
+    if (!conv.assigned_did) {
+      const inboundDid = (toNum || '').replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, '');
+      if (db.getFractelDidPool().includes(inboundDid)) {
+        db.setConversationDid(conv.id, inboundDid);
+      }
+    }
 
     const msgData = {
       conversation_id: conv.id,
