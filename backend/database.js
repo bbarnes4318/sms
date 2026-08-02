@@ -108,6 +108,21 @@ function initDatabase() {
     console.log("Database migration: Added 'city' column to conversations table.");
   }
 
+  // Migration: Lead disposition columns (appointment / follow_up / no / unqualified / customer)
+  const dispositionColumns = [
+    ['disposition', "ALTER TABLE conversations ADD COLUMN disposition TEXT"],
+    ['disposition_at', "ALTER TABLE conversations ADD COLUMN disposition_at TEXT"],
+    ['scheduled_at', "ALTER TABLE conversations ADD COLUMN scheduled_at TEXT"],
+    ['disposition_note', "ALTER TABLE conversations ADD COLUMN disposition_note TEXT"]
+  ];
+  dispositionColumns.forEach(([name, sql]) => {
+    if (!tableInfo.some(column => column.name === name)) {
+      db.prepare(sql).run();
+      console.log(`Database migration: Added '${name}' column to conversations table.`);
+    }
+  });
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_disposition ON conversations(disposition)`).run();
+
   // Run database migration to normalize existing conversation numbers
   migrateAndNormalizeDatabase();
 
@@ -221,9 +236,10 @@ function updateSettings(settingsObj) {
 
 function getConversations() {
   return db.prepare(`
-    SELECT c.*, 
+    SELECT c.*,
            (SELECT direction FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message_direction,
-           (SELECT MAX(created_at) FROM messages WHERE conversation_id = c.id AND direction = 'inbound') as last_inbound_at
+           (SELECT MAX(created_at) FROM messages WHERE conversation_id = c.id AND direction = 'inbound') as last_inbound_at,
+           (SELECT body FROM messages WHERE conversation_id = c.id AND direction = 'inbound' ORDER BY created_at DESC, id DESC LIMIT 1) as last_inbound_text
     FROM conversations c
     ORDER BY 
       CASE WHEN last_inbound_at IS NOT NULL THEN 0 ELSE 1 END,
@@ -430,6 +446,77 @@ function getQueueStats() {
   };
 }
 
+/* ------------------------------------------------------------------
+ * Bulk-send suppression
+ *
+ * Nobody in these states may be reached by a campaign, a bulk message
+ * or a CSV re-import. To message one of them, open the conversation
+ * and send individually.
+ *
+ * The keyword lists mirror NEGATIVE_EXACT / NEGATIVE_PHRASES in
+ * public/app.js — keep the two in sync.
+ * ------------------------------------------------------------------ */
+const BLOCKED_DISPOSITIONS = ['no', 'unqualified', 'customer'];
+
+const OPT_OUT_EXACT = [
+  'no', 'nope', 'nah', 'na', 'no thanks', 'no thank you', 'no thx', 'nope thanks',
+  'not interested', 'im not interested', 'i am not interested', 'no interest',
+  'stop', 'stopall', 'stop all', 'end', 'quit', 'cancel', 'unsubscribe',
+  'unsub', 'optout', 'opt out', 'revoke', 'remove', 'remove me', 'delete me',
+  'take me off', 'go away', 'leave me alone', 'fuck off', 'fuck you', 'f off',
+  'piss off', 'never', 'no way', 'pass', 'hard pass', 'wrong number'
+];
+
+const OPT_OUT_PHRASES = [
+  'remove me from your list', 'remove me from the list', 'remove my number',
+  'take me off your list', 'take me off the list', 'take me off your',
+  'off your list', 'off of your list', 'delete my number',
+  'stop texting', 'stop messaging', 'stop contacting', 'stop calling',
+  'do not text', "don't text", 'do not contact', "don't contact",
+  'do not call', "don't call", 'not interested', 'no longer interested',
+  'unsubscribe', 'opt me out', 'fuck off', 'fuck you', 'leave me alone',
+  'quit texting', 'quit messaging', 'lose my number'
+];
+
+function normalizeReplyText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isOptOutReply(text) {
+  const normalized = normalizeReplyText(text);
+  if (!normalized) return false;
+
+  if (OPT_OUT_EXACT.includes(normalized)) return true;
+  if (OPT_OUT_PHRASES.some(phrase => normalized.includes(phrase))) return true;
+
+  const words = normalized.split(' ');
+  return words.length <= 4 && OPT_OUT_EXACT.includes(words[0]);
+}
+
+function getLastInboundBody(conversationId) {
+  const row = db.prepare(`
+    SELECT body FROM messages
+    WHERE conversation_id = ? AND direction = 'inbound'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).get(conversationId);
+  return row ? row.body : null;
+}
+
+// Returns a reason string when the contact must be skipped, otherwise null.
+function getBulkSendBlockReason(conv) {
+  if (!conv) return 'missing';
+  if (conv.disposition && BLOCKED_DISPOSITIONS.includes(conv.disposition)) {
+    return conv.disposition;
+  }
+  if (isOptOutReply(getLastInboundBody(conv.id))) return 'opted_out';
+  return null;
+}
+
 function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   const settings = getSettings();
   const fromNum = fromNumber || settings.sender_number || '+18887885527';
@@ -448,13 +535,21 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
 
   const insertedMessages = [];
   const insertedConvs = [];
+  const skipped = [];
 
   const transaction = db.transaction((leadsList) => {
     for (const lead of leadsList) {
       if (!lead.phone_number) continue;
-      
+
       const conv = getOrCreateConversation(lead.phone_number, lead.name, lead.city);
       insertedConvs.push(conv);
+
+      // Re-importing must not resurrect someone who opted out or was closed
+      const blockReason = getBulkSendBlockReason(conv);
+      if (blockReason) {
+        skipped.push({ id: conv.id, phone_number: conv.phone_number, reason: blockReason });
+        continue;
+      }
 
       // Reset stage to Stage 1 upon re-import/new import
       db.prepare("UPDATE conversations SET stage = 'Stage 1' WHERE id = ?").run(conv.id);
@@ -484,7 +579,7 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   });
 
   transaction(leads);
-  return { conversations: insertedConvs, messages: insertedMessages };
+  return { conversations: insertedConvs, messages: insertedMessages, skipped };
 }
 
 function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
@@ -514,11 +609,19 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
   `);
 
   const insertedMessages = [];
+  const skipped = [];
 
   const transaction = db.transaction((ids) => {
     for (const id of ids) {
       const conv = getConvStmt.get(id);
       if (!conv) continue;
+
+      // Never blast someone who opted out or was dispositioned out
+      const blockReason = getBulkSendBlockReason(conv);
+      if (blockReason) {
+        skipped.push({ id: conv.id, phone_number: conv.phone_number, reason: blockReason });
+        continue;
+      }
 
       // Calculate next stage for follow-up message
       const outboundCount = db.prepare(`
@@ -555,7 +658,7 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
   });
 
   transaction(conversationIds);
-  return insertedMessages;
+  return { messages: insertedMessages, skipped };
 }
 
 function deleteConversation(id) {
@@ -590,6 +693,175 @@ function getRecentMessages(limit = 10) {
 
 function markConversationRead(id) {
   return db.prepare("UPDATE conversations SET unread = 0 WHERE id = ?").run(id);
+}
+
+// Lead dispositions. 'appointment' and 'follow_up' carry a scheduled date/time;
+// passing null clears the disposition and returns the lead to the New tab.
+const VALID_DISPOSITIONS = ['appointment', 'follow_up', 'no', 'unqualified', 'customer'];
+
+function setConversationDisposition(id, disposition, scheduledAt = null, note = null) {
+  if (disposition !== null && !VALID_DISPOSITIONS.includes(disposition)) {
+    throw new Error(`Invalid disposition: ${disposition}`);
+  }
+  if ((disposition === 'appointment' || disposition === 'follow_up') && !scheduledAt) {
+    throw new Error(`A date and time is required for the '${disposition}' disposition`);
+  }
+
+  // Only the scheduled dispositions keep a date on the record
+  const keepsSchedule = disposition === 'appointment' || disposition === 'follow_up';
+
+  db.prepare(`
+    UPDATE conversations
+    SET disposition = ?,
+        disposition_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', 'localtime') END,
+        scheduled_at = ?,
+        disposition_note = ?
+    WHERE id = ?
+  `).run(
+    disposition,
+    disposition,
+    keepsSchedule ? scheduledAt : null,
+    note || null,
+    id
+  );
+
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+}
+
+/* ------------------------------------------------------------------
+ * Performance stats
+ *
+ * All dates are naive local 'YYYY-MM-DD HH:MM:SS' strings, matching
+ * datetime('now','localtime') used everywhere else, so date() works
+ * directly without timezone conversion.
+ * ------------------------------------------------------------------ */
+function getStats(fromDate, toDate) {
+  const range = [fromDate, toDate];
+
+  // Outbound volume and delivery outcome
+  const outbound = db.prepare(`
+    SELECT
+      COUNT(*) as attempted,
+      SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as delivered,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(CASE WHEN status IN ('queued', 'sending') THEN 1 ELSE 0 END) as in_flight,
+      COUNT(DISTINCT conversation_id) as contacts_reached
+    FROM messages
+    WHERE direction = 'outbound' AND date(created_at) BETWEEN ? AND ?
+  `).get(...range);
+
+  // Inbound replies, classified in JS so the keyword list stays in one place
+  const inboundRows = db.prepare(`
+    SELECT conversation_id, body
+    FROM messages
+    WHERE direction = 'inbound' AND date(created_at) BETWEEN ? AND ?
+  `).all(...range);
+
+  let positive = 0;
+  let negative = 0;
+  const responders = new Set();
+  const positiveResponders = new Set();
+
+  inboundRows.forEach(row => {
+    responders.add(row.conversation_id);
+    if (isOptOutReply(row.body)) {
+      negative++;
+    } else {
+      positive++;
+      positiveResponders.add(row.conversation_id);
+    }
+  });
+
+  // Daily series for the chart
+  const daily = db.prepare(`
+    SELECT
+      date(created_at) as day,
+      SUM(CASE WHEN direction = 'outbound' AND status = 'sent' THEN 1 ELSE 0 END) as sent,
+      SUM(CASE WHEN direction = 'outbound' AND status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as replies
+    FROM messages
+    WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY date(created_at)
+    ORDER BY day ASC
+  `).all(...range);
+
+  // Dispositions applied during the window
+  const dispositionRows = db.prepare(`
+    SELECT disposition, COUNT(*) as count
+    FROM conversations
+    WHERE disposition IS NOT NULL AND date(disposition_at) BETWEEN ? AND ?
+    GROUP BY disposition
+  `).all(...range);
+
+  const dispositions = { appointment: 0, follow_up: 0, no: 0, unqualified: 0, customer: 0 };
+  dispositionRows.forEach(row => {
+    if (row.disposition in dispositions) dispositions[row.disposition] = row.count;
+  });
+
+  // New contacts first created in the window
+  const newLeads = db.prepare(`
+    SELECT COUNT(*) as count FROM conversations WHERE date(created_at) BETWEEN ? AND ?
+  `).get(...range).count;
+
+  // Average minutes between our last outbound and their reply
+  const replyLag = db.prepare(`
+    SELECT AVG(
+      (julianday(m.created_at) - julianday((
+        SELECT MAX(o.created_at) FROM messages o
+        WHERE o.conversation_id = m.conversation_id
+          AND o.direction = 'outbound'
+          AND o.created_at < m.created_at
+      ))) * 1440
+    ) as avg_minutes
+    FROM messages m
+    WHERE m.direction = 'inbound' AND date(m.created_at) BETWEEN ? AND ?
+  `).get(...range).avg_minutes;
+
+  // Hour of day that draws the most replies
+  const peakHour = db.prepare(`
+    SELECT strftime('%H', created_at) as hour, COUNT(*) as count
+    FROM messages
+    WHERE direction = 'inbound' AND date(created_at) BETWEEN ? AND ?
+    GROUP BY hour
+    ORDER BY count DESC, hour ASC
+    LIMIT 1
+  `).get(...range);
+
+  const attempted = outbound.attempted || 0;
+  const delivered = outbound.delivered || 0;
+  const responses = inboundRows.length;
+
+  const rate = (numerator, denominator) =>
+    denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+
+  return {
+    from: fromDate,
+    to: toDate,
+    sent: {
+      attempted,
+      delivered,
+      failed: outbound.failed || 0,
+      in_flight: outbound.in_flight || 0,
+      contacts_reached: outbound.contacts_reached || 0,
+      delivery_rate: rate(delivered, delivered + (outbound.failed || 0))
+    },
+    responses: {
+      total: responses,
+      unique_responders: responders.size,
+      positive,
+      negative,
+      positive_responders: positiveResponders.size,
+      response_rate: rate(responders.size, outbound.contacts_reached || 0),
+      positive_rate_of_replies: rate(positive, responses),
+      positive_rate_of_sent: rate(positiveResponders.size, outbound.contacts_reached || 0),
+      negative_rate_of_replies: rate(negative, responses)
+    },
+    dispositions,
+    new_leads: newLeads,
+    avg_reply_minutes: replyLag === null ? null : Math.round(replyLag),
+    peak_reply_hour: peakHour ? parseInt(peakHour.hour, 10) : null,
+    daily
+  };
 }
 
 // Password Hashing
@@ -669,6 +941,12 @@ module.exports = {
   deleteConversation,
   getRecentMessages,
   markConversationRead,
+  setConversationDisposition,
+  VALID_DISPOSITIONS,
+  BLOCKED_DISPOSITIONS,
+  isOptOutReply,
+  getBulkSendBlockReason,
+  getStats,
   countUsers,
   createUser,
   validateUser,

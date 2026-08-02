@@ -243,6 +243,48 @@ app.post('/api/conversations/:id/read', (req, res) => {
   }
 });
 
+// 3.6. Set / clear a lead disposition
+app.post('/api/conversations/:id/disposition', (req, res) => {
+  const convId = parseInt(req.params.id, 10);
+  const { disposition, scheduled_at, note } = req.body;
+
+  try {
+    const updated = db.setConversationDisposition(
+      convId,
+      disposition || null,
+      scheduled_at || null,
+      note || null
+    );
+    if (!updated) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    broadcast('conversation_disposition', updated);
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 3.7. Performance stats for a date range
+app.get('/api/stats', (req, res) => {
+  const isDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const { from, to } = req.query;
+
+  if (!isDate(from) || !isDate(to)) {
+    return res.status(400).json({ error: 'from and to are required as YYYY-MM-DD' });
+  }
+  if (from > to) {
+    return res.status(400).json({ error: 'from must not be after to' });
+  }
+
+  try {
+    res.json(db.getStats(from, to));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 4. Queue a message (Outbound)
 app.post('/api/conversations/:id/messages', (req, res) => {
   const convId = parseInt(req.params.id, 10);
@@ -310,7 +352,8 @@ app.post('/api/leads/upload', (req, res) => {
     res.json({
       success: true,
       imported_count: result.conversations.length,
-      queued_count: result.messages.length
+      queued_count: result.messages.length,
+      skipped_count: result.skipped.length
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -328,7 +371,7 @@ app.post('/api/conversations/bulk-message', (req, res) => {
   }
 
   try {
-    const messages = db.sendBulkMessages(conversation_ids, message_text, from_number || null);
+    const { messages, skipped } = db.sendBulkMessages(conversation_ids, message_text, from_number || null);
     
     // Broadcast new messages via WebSockets if any
     if (messages.length > 0) {
@@ -344,7 +387,8 @@ app.post('/api/conversations/bulk-message', (req, res) => {
 
     res.json({
       success: true,
-      queued_count: messages.length
+      queued_count: messages.length,
+      skipped_count: skipped.length
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -377,7 +421,7 @@ app.post('/api/campaigns', (req, res) => {
       });
     }
 
-    const messages = db.sendBulkMessages(conversationIds, message_text, from_number || null);
+    const { messages, skipped } = db.sendBulkMessages(conversationIds, message_text, from_number || null);
     
     // Broadcast new messages via WebSockets if any
     if (messages.length > 0) {
@@ -393,7 +437,8 @@ app.post('/api/campaigns', (req, res) => {
 
     res.json({
       success: true,
-      queued_count: messages.length
+      queued_count: messages.length,
+      skipped_count: skipped.length
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

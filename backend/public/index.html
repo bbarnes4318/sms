@@ -19,52 +19,117 @@
       <div class="sidebar-header">
         <div class="logo">
           <img src="leadzer.png" alt="Leadzer Logo" class="logo-img">
-          <a href="/storm-map" target="_blank" rel="noopener noreferrer" class="btn-map-link" title="Open Storm Intelligence Map in a new tab">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>
-            <span>Storm Map</span>
-          </a>
-        </div>
-        <div class="sidebar-search-row">
-          <div class="search-box">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input type="text" id="search-input" placeholder="Search chats...">
+          <div class="logo-actions">
+            <button type="button" id="btn-open-stats" class="btn-map-link" title="Open performance stats">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+              <span>Stats</span>
+            </button>
+            <a href="/storm-map" target="_blank" rel="noopener noreferrer" class="btn-map-link" title="Open Storm Intelligence Map in a new tab">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>
+              <span>Storm Map</span>
+            </a>
           </div>
-          <button id="btn-new-chat" class="btn-primary btn-expandable" title="Start New Conversation">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            <span class="btn-label">New Chat</span>
+        </div>
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="search-input" placeholder="Search name or number...">
+        </div>
+        <div class="sidebar-actions">
+          <button id="btn-new-chat" class="btn-action btn-action-primary" title="Start a new conversation">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>New Chat</span>
           </button>
-          <button id="btn-upload-leads" class="btn-accent btn-expandable" title="Bulk Upload Leads">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            <span class="btn-label">Upload Leads</span>
+          <button id="btn-upload-leads" class="btn-action" title="Bulk upload leads from a CSV file">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <span>Upload</span>
           </button>
-          <button id="btn-send-campaign" class="btn-accent btn-expandable" title="Send Stage Campaign">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-            <span class="btn-label">Campaign</span>
+          <button id="btn-send-campaign" class="btn-action" title="Send a campaign to a whole stage">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <span>Campaign</span>
           </button>
         </div>
       </div>
-      
-      <!-- Filters Container -->
-      <div class="filters-container">
-        <!-- Tier 1: Status Filters -->
-        <div class="status-filters">
-          <button type="button" class="status-pill active" data-status="responded">Responded</button>
-          <button type="button" class="status-pill" data-status="pending">Pending</button>
-          <button type="button" class="status-pill" data-status="storm-demo" id="tab-storm-demo">Storm Map Form <span class="badge" id="storm-demo-count" style="display:none; background: var(--success); color: white; border-radius: 10px; padding: 1px 6px; font-size: 9px; margin-left: 4px;">0</span></button>
+
+      <!-- Folder navigation -->
+      <nav class="folder-nav" id="folder-nav" aria-label="Lead folders">
+        <div class="folder-grid" role="tablist">
+          <button type="button" class="folder-tab folder-new active" data-folder="new" role="tab" title="New positive replies waiting to be dispositioned">
+            <span class="tab-dot"></span>
+            <span class="tab-label">New</span>
+            <span class="tab-count" id="count-folder-new">0</span>
+          </button>
+          <button type="button" class="folder-tab folder-hot" data-folder="hot" role="tab" title="Appointments and follow-ups">
+            <span class="tab-dot"></span>
+            <span class="tab-label">Hot Leads</span>
+            <span class="tab-count" id="count-folder-hot">0</span>
+          </button>
+          <button type="button" class="folder-tab folder-customer" data-folder="customer" role="tab" title="Realtors who became customers">
+            <span class="tab-dot"></span>
+            <span class="tab-label">Customers</span>
+            <span class="tab-count" id="count-folder-customer">0</span>
+          </button>
+          <button type="button" class="folder-tab folder-closed" data-folder="closed" role="tab" title="No and unqualified leads">
+            <span class="tab-dot"></span>
+            <span class="tab-label">Closed</span>
+            <span class="tab-count" id="count-folder-closed">0</span>
+          </button>
+          <button type="button" class="folder-tab folder-pending" data-folder="pending" role="tab" title="Contacted, no reply yet">
+            <span class="tab-dot"></span>
+            <span class="tab-label">Pending</span>
+            <span class="tab-count" id="count-folder-pending">0</span>
+          </button>
+          <button type="button" class="folder-tab folder-webform" data-folder="storm-demo" id="tab-storm-demo" role="tab" title="Leads from the website demo form">
+            <span class="tab-dot"></span>
+            <span class="tab-label">Web Form</span>
+            <span class="tab-count" id="count-folder-storm-demo">0</span>
+          </button>
         </div>
-        <!-- Tier 2: Stage Filters -->
-        <div class="stage-filters">
-          <button type="button" class="stage-pill active" data-stage="all">All</button>
-          <button type="button" class="stage-pill" data-stage="Stage 1">Stage 1</button>
-          <button type="button" class="stage-pill" data-stage="Stage 2">Stage 2</button>
-          <button type="button" class="stage-pill" data-stage="Stage 3">Stage 3</button>
+
+        <!-- Sub-tabs, shown only for folders that have them -->
+        <div class="subtab-row" id="subtab-row" style="display: none;">
+          <button type="button" class="subtab" data-parent="hot" data-view="appointment">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <span>Appointments</span>
+            <span class="subtab-count" id="count-appointment">0</span>
+          </button>
+          <button type="button" class="subtab" data-parent="hot" data-view="follow_up">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>
+            <span>Follow-Ups</span>
+            <span class="subtab-count" id="count-follow_up">0</span>
+          </button>
+          <button type="button" class="subtab" data-parent="closed" data-view="no">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <span>No</span>
+            <span class="subtab-count" id="count-no">0</span>
+          </button>
+          <button type="button" class="subtab" data-parent="closed" data-view="unqualified">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg>
+            <span>Unqualified</span>
+            <span class="subtab-count" id="count-unqualified">0</span>
+          </button>
         </div>
-        <details class="date-filters-accordion">
-          <summary class="date-filters-summary">
-            <span>Filter by Date</span>
-            <svg class="chevron-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </summary>
-          <div class="date-filters-content">
+      </nav>
+
+      <!-- Collapsible secondary filters -->
+      <details class="filters-accordion" id="filters-accordion">
+        <summary class="filters-summary">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+          <span class="filters-summary-label">Stage &amp; date filters</span>
+          <span class="filters-active-badge" id="filters-active-badge" style="display: none;">0</span>
+          <svg class="chevron-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </summary>
+        <div class="filters-body">
+          <div class="filter-group">
+            <span class="filter-group-label">Follow-up stage</span>
+            <div class="stage-filters">
+              <button type="button" class="stage-pill active" data-stage="all">All</button>
+              <button type="button" class="stage-pill" data-stage="Stage 1">Stage 1</button>
+              <button type="button" class="stage-pill" data-stage="Stage 2">Stage 2</button>
+              <button type="button" class="stage-pill" data-stage="Stage 3">Stage 3</button>
+            </div>
+          </div>
+          <div class="filter-group">
+            <span class="filter-group-label">Last activity date</span>
             <div class="date-filters">
               <div class="date-input-group">
                 <label for="filter-from-date">From</label>
@@ -74,12 +139,13 @@
                 <label for="filter-to-date">To</label>
                 <input type="date" id="filter-to-date">
               </div>
-              <button type="button" class="btn-clear-date" id="btn-clear-date" title="Clear Date Filters">&times;</button>
+              <button type="button" class="btn-clear-date" id="btn-clear-date" title="Clear date filters">&times;</button>
             </div>
           </div>
-        </details>
-      </div>
-      
+          <button type="button" class="btn-reset-filters" id="btn-reset-filters">Reset all filters</button>
+        </div>
+      </details>
+
       <div class="conv-list-header" id="conv-list-header" style="display: none;">
         <label class="select-all-container">
           <input type="checkbox" id="chk-select-all-convs">
@@ -104,7 +170,10 @@
         <div class="active-contact-info">
           <div class="avatar" id="active-avatar">#</div>
           <div>
-            <h2 id="active-contact-name">Select a conversation</h2>
+            <div class="active-contact-name-row">
+              <h2 id="active-contact-name">Select a conversation</h2>
+              <span class="sentiment-badge" id="active-sentiment-badge" style="display: none;"></span>
+            </div>
             <p id="active-contact-phone" class="subtext">Select or start a chat to send messages</p>
           </div>
         </div>
@@ -115,7 +184,38 @@
           </button>
         </div>
       </header>
-      
+
+      <!-- One-click disposition bar -->
+      <div class="disposition-bar" id="disposition-bar" style="display: none;">
+        <span class="disposition-label">Disposition</span>
+        <div class="disposition-actions">
+          <button type="button" class="dispo-btn dispo-appointment" data-disposition="appointment" title="Book an appointment (asks for date and time)">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <span>Set Appointment</span>
+          </button>
+          <button type="button" class="dispo-btn dispo-follow_up" data-disposition="follow_up" title="Schedule a follow-up (asks for date and time)">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>
+            <span>Follow-Up</span>
+          </button>
+          <button type="button" class="dispo-btn dispo-no" data-disposition="no" title="Not interested">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <span>No</span>
+          </button>
+          <button type="button" class="dispo-btn dispo-unqualified" data-disposition="unqualified" title="Not a fit / bad lead">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg>
+            <span>Unqualified</span>
+          </button>
+          <button type="button" class="dispo-btn dispo-customer" data-disposition="customer" title="This realtor is now a customer">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+            <span>Customer</span>
+          </button>
+        </div>
+        <div class="disposition-current" id="disposition-current" style="display: none;">
+          <span class="disposition-chip" id="disposition-chip"></span>
+          <button type="button" class="btn-clear-disposition" id="btn-clear-disposition" title="Clear disposition and move back to New">Undo</button>
+        </div>
+      </div>
+
       <section class="messages-feed" id="messages-feed">
         <div class="feed-placeholder">
           <div class="welcome-box">
@@ -220,11 +320,11 @@
       <div class="panel-section quick-test-section">
         <div class="panel-header-row">
           <h3>Quick SMS Test</h3>
-          <button type="button" id="btn-toggle-test" class="btn-toggle-icon" title="Toggle Test Tool">
+          <button type="button" id="btn-toggle-test" class="btn-toggle-icon collapsed" title="Toggle Test Tool">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
           </button>
         </div>
-        <form id="quick-test-form" class="quick-test-form">
+        <form id="quick-test-form" class="quick-test-form collapsed">
           <div class="test-field-group">
             <label for="test-phone">Recipient Phone</label>
             <input type="tel" id="test-phone" placeholder="e.g. +14075550192" required>
@@ -354,6 +454,159 @@
         </div>
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-bulk">Send Message</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Performance Stats Overlay -->
+  <div class="stats-overlay" id="stats-overlay">
+    <div class="stats-panel">
+      <header class="stats-header">
+        <div>
+          <h2>Performance</h2>
+          <p class="subtext" id="stats-range-label">&nbsp;</p>
+        </div>
+        <button type="button" class="modal-close" id="stats-close" title="Close">&times;</button>
+      </header>
+
+      <div class="stats-controls">
+        <div class="stats-presets" id="stats-presets">
+          <button type="button" class="stats-preset" data-preset="today">Today</button>
+          <button type="button" class="stats-preset" data-preset="yesterday">Yesterday</button>
+          <button type="button" class="stats-preset" data-preset="this-week">This Week</button>
+          <button type="button" class="stats-preset" data-preset="last-week">Last Week</button>
+          <button type="button" class="stats-preset active" data-preset="this-month">This Month</button>
+          <button type="button" class="stats-preset" data-preset="last-month">Last Month</button>
+          <button type="button" class="stats-preset" data-preset="this-year">This Year</button>
+          <button type="button" class="stats-preset" data-preset="last-year">Last Year</button>
+        </div>
+        <div class="stats-date-range">
+          <div class="date-input-group">
+            <label for="stats-from">From</label>
+            <input type="date" id="stats-from">
+          </div>
+          <div class="date-input-group">
+            <label for="stats-to">To</label>
+            <input type="date" id="stats-to">
+          </div>
+          <button type="button" class="btn-primary btn-small" id="btn-apply-stats">Apply</button>
+        </div>
+      </div>
+
+      <div class="stats-body" id="stats-body">
+        <div class="stats-loading" id="stats-loading">Loading performance data…</div>
+
+        <div class="stats-content" id="stats-content" style="display: none;">
+          <!-- Headline KPIs -->
+          <div class="kpi-grid">
+            <div class="kpi-card kpi-sent">
+              <div class="kpi-label">Texts Sent</div>
+              <div class="kpi-value" id="kpi-sent">0</div>
+              <div class="kpi-sub" id="kpi-sent-sub">&nbsp;</div>
+            </div>
+            <div class="kpi-card kpi-delivered">
+              <div class="kpi-label">Delivered</div>
+              <div class="kpi-value" id="kpi-delivered">0</div>
+              <div class="kpi-sub" id="kpi-delivered-sub">&nbsp;</div>
+            </div>
+            <div class="kpi-card kpi-responses">
+              <div class="kpi-label">Total Responses</div>
+              <div class="kpi-value" id="kpi-responses">0</div>
+              <div class="kpi-sub" id="kpi-responses-sub">&nbsp;</div>
+            </div>
+            <div class="kpi-card kpi-positive">
+              <div class="kpi-label">Positive Responses</div>
+              <div class="kpi-value-row">
+                <span class="kpi-value" id="kpi-positive">0</span>
+                <span class="kpi-rate" id="kpi-positive-rate">0%</span>
+              </div>
+              <div class="kpi-sub" id="kpi-positive-sub">&nbsp;</div>
+            </div>
+            <div class="kpi-card kpi-negative">
+              <div class="kpi-label">Negative Responses</div>
+              <div class="kpi-value-row">
+                <span class="kpi-value" id="kpi-negative">0</span>
+                <span class="kpi-rate" id="kpi-negative-rate">0%</span>
+              </div>
+              <div class="kpi-sub" id="kpi-negative-sub">&nbsp;</div>
+            </div>
+          </div>
+
+          <!-- Secondary metrics -->
+          <div class="ministat-grid">
+            <div class="ministat"><span class="ministat-label">Contacts Reached</span><span class="ministat-value" id="ms-contacts">0</span></div>
+            <div class="ministat"><span class="ministat-label">New Leads Added</span><span class="ministat-value" id="ms-new-leads">0</span></div>
+            <div class="ministat"><span class="ministat-label">Failed Sends</span><span class="ministat-value" id="ms-failed">0</span></div>
+            <div class="ministat"><span class="ministat-label">Still In Queue</span><span class="ministat-value" id="ms-inflight">0</span></div>
+            <div class="ministat"><span class="ministat-label">Avg Time To Reply</span><span class="ministat-value" id="ms-reply-time">—</span></div>
+            <div class="ministat"><span class="ministat-label">Peak Reply Hour</span><span class="ministat-value" id="ms-peak-hour">—</span></div>
+          </div>
+
+          <div class="stats-row">
+            <!-- Daily activity chart -->
+            <section class="stats-card chart-card">
+              <div class="stats-card-header">
+                <h3>Activity Over Time</h3>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="legend-swatch swatch-sent"></span>Delivered</span>
+                  <span class="legend-item"><span class="legend-swatch swatch-replies"></span>Replies</span>
+                </div>
+              </div>
+              <div class="chart-wrapper" id="stats-chart"></div>
+            </section>
+
+            <!-- Conversion funnel -->
+            <section class="stats-card funnel-card">
+              <div class="stats-card-header">
+                <h3>Conversion Funnel</h3>
+              </div>
+              <div class="funnel" id="stats-funnel"></div>
+            </section>
+          </div>
+
+          <!-- Disposition breakdown -->
+          <section class="stats-card">
+            <div class="stats-card-header">
+              <h3>Dispositions Set In This Period</h3>
+            </div>
+            <div class="disposition-grid" id="stats-dispositions"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Appointment / Follow-Up Scheduling Modal -->
+  <div class="modal" id="schedule-modal">
+    <div class="modal-content modal-narrow">
+      <div class="modal-header">
+        <h2 id="schedule-modal-title">Set Appointment</h2>
+        <button class="modal-close" id="schedule-close">&times;</button>
+      </div>
+      <form id="schedule-form">
+        <p class="schedule-contact" id="schedule-contact"></p>
+
+        <div class="form-group">
+          <label>Quick pick</label>
+          <div class="quick-pick-row">
+            <button type="button" class="quick-pick" data-offset="2h">In 2 hours</button>
+            <button type="button" class="quick-pick" data-offset="tomorrow">Tomorrow 10 AM</button>
+            <button type="button" class="quick-pick" data-offset="2d">In 2 days</button>
+            <button type="button" class="quick-pick" data-offset="7d">Next week</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="schedule-datetime">Date &amp; time</label>
+          <input type="datetime-local" id="schedule-datetime" required>
+        </div>
+
+        <div class="form-group">
+          <label for="schedule-note">Note (optional)</label>
+          <textarea id="schedule-note" rows="2" placeholder="e.g. Wants pricing for the quarterly plan"></textarea>
+        </div>
+
+        <button type="submit" class="btn-primary btn-block" id="btn-save-schedule">Save</button>
       </form>
     </div>
   </div>

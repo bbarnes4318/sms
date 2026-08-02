@@ -17,6 +17,115 @@ window.fetch = async function(...args) {
   }
 };
 
+/* ------------------------------------------------------------------
+ * Reply sentiment classification
+ *
+ * A reply is treated as NEGATIVE only when it is a rejection or an
+ * opt-out. Everything else — a question, a "maybe", a callback time,
+ * even a single "?" — counts as POSITIVE, because it means the lead
+ * is still talking to us.
+ *
+ * Edit these two lists to tune what lands in the Negative tab.
+ * ------------------------------------------------------------------ */
+
+// Whole-reply matches: the reply is negative only if it says nothing else.
+const NEGATIVE_EXACT = [
+  'no', 'nope', 'nah', 'na', 'no thanks', 'no thank you', 'no thx', 'nope thanks',
+  'not interested', 'im not interested', 'i am not interested', 'no interest',
+  'stop', 'stopall', 'stop all', 'end', 'quit', 'cancel', 'unsubscribe',
+  'unsub', 'optout', 'opt out', 'revoke', 'remove', 'remove me', 'delete me',
+  'take me off', 'go away', 'leave me alone', 'fuck off', 'fuck you', 'f off',
+  'piss off', 'never', 'no way', 'pass', 'hard pass', 'wrong number'
+];
+
+// Substring matches: negative no matter what else the reply contains.
+const NEGATIVE_PHRASES = [
+  'remove me from your list', 'remove me from the list', 'remove my number',
+  'take me off your list', 'take me off the list', 'take me off your',
+  'off your list', 'off of your list', 'delete my number',
+  'stop texting', 'stop messaging', 'stop contacting', 'stop calling',
+  'do not text', "don't text", 'do not contact', "don't contact",
+  'do not call', "don't call", 'not interested', 'no longer interested',
+  'unsubscribe', 'opt me out', 'fuck off', 'fuck you', 'leave me alone',
+  'quit texting', 'quit messaging', 'lose my number'
+];
+
+// Normalize a reply for matching: lowercase, strip punctuation/emoji, collapse spaces.
+function normalizeReply(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Returns 'negative' or 'positive' for a given inbound reply body.
+function classifyReply(text) {
+  const normalized = normalizeReply(text);
+  if (!normalized) return 'positive';
+
+  if (NEGATIVE_EXACT.includes(normalized)) return 'negative';
+  if (NEGATIVE_PHRASES.some(phrase => normalized.includes(phrase))) return 'negative';
+
+  // Short replies that start with a rejection word ("no thanks man", "stop please")
+  const words = normalized.split(' ');
+  if (words.length <= 4 && NEGATIVE_EXACT.includes(words[0])) return 'negative';
+
+  return 'positive';
+}
+
+/* ------------------------------------------------------------------
+ * Folders and views
+ *
+ * A conversation lands in exactly one "view". Views are grouped into
+ * the folders shown in the sidebar; a folder's count is the sum of
+ * its views. A manual disposition always wins over the automatic
+ * positive/negative read of the reply.
+ * ------------------------------------------------------------------ */
+const FOLDERS = {
+  'new':        { views: ['new'] },
+  'hot':        { views: ['appointment', 'follow_up'] },
+  'customer':   { views: ['customer'] },
+  'closed':     { views: ['no', 'unqualified'] },
+  'pending':    { views: ['pending'] },
+  'storm-demo': { views: ['storm-demo'] }
+};
+
+const ALL_VIEWS = Object.values(FOLDERS).flatMap(f => f.views);
+
+// Views whose rows are ordered by their scheduled date/time rather than recency
+const SCHEDULED_VIEWS = ['appointment', 'follow_up'];
+
+const DISPOSITION_LABELS = {
+  appointment: 'Appointment',
+  follow_up: 'Follow-Up',
+  no: 'No',
+  unqualified: 'Unqualified',
+  customer: 'Customer'
+};
+
+// Which view a conversation belongs to
+function getConversationBucket(conv) {
+  if (conv.isLead) return 'storm-demo';
+
+  // A manual disposition overrides everything else
+  if (conv.disposition && DISPOSITION_LABELS[conv.disposition]) {
+    return conv.disposition;
+  }
+
+  const hasResponded = conv.stage && conv.stage.endsWith('-Responded');
+  if (!hasResponded) return 'pending';
+
+  // Auto-detected opt-outs go straight to Closed > No without needing a click
+  if (classifyReply(conv.last_inbound_text) === 'negative') return 'no';
+
+  return 'new';
+}
+
+function getFolderForView(view) {
+  return Object.keys(FOLDERS).find(f => FOLDERS[f].views.includes(view)) || 'new';
+}
+
 // Application State
 let activeConversation = null;
 let conversations = [];
@@ -24,7 +133,9 @@ let messages = [];
 let ws = null;
 let wsReconnectTimer = null;
 let parsedLeads = []; // Phase 2: Parsed leads storage
-let currentStatusFilter = 'responded'; // Status filter (responded/pending)
+let currentFolder = 'new'; // Sidebar folder (new/hot/customer/closed/pending/storm-demo)
+let currentView = 'new';   // Active view within that folder
+let pendingDisposition = null; // Disposition awaiting a date/time from the schedule modal
 let currentStageFilter = 'all'; // Stage filter (Stage 1/Stage 2/Stage 3/all)
 let fromDate = '';
 let toDate = '';
@@ -132,8 +243,9 @@ window.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('storm_map_imported_county', county);
         localStorage.setItem('storm_map_imported_state', state);
         
-        currentStatusFilter = 'storm-demo';
-        
+        currentFolder = 'storm-demo';
+        currentView = 'storm-demo';
+
         // Remove query parameters from address bar
         window.history.replaceState({}, document.title, window.location.pathname);
       }
@@ -147,6 +259,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadRecentActivity();
   setupWebSockets();
   updateStormLeadsBadge();
+  setupStatsPanel();
   
   // Set webhook URL based on current host
   const host = window.location.host;
@@ -156,28 +269,16 @@ window.addEventListener('DOMContentLoaded', () => {
   // Event Listeners
   searchInput.addEventListener('input', filterConversations);
 
-  // Status Filters click handlers
-  document.querySelectorAll('.status-pill').forEach(pill => {
-    pill.addEventListener('click', (e) => {
-      document.querySelectorAll('.status-pill').forEach(p => p.classList.remove('active'));
-      pill.classList.add('active');
-      currentStatusFilter = pill.dataset.status;
-      filterConversations();
-      toggleViewsBasedOnFilter();
-    });
+  // Inbox tab click handlers
+  document.querySelectorAll('.folder-tab').forEach(tab => {
+    tab.addEventListener('click', () => setActiveFolder(tab.dataset.folder));
+  });
+  document.querySelectorAll('.subtab').forEach(tab => {
+    tab.addEventListener('click', () => setActiveView(tab.dataset.view));
   });
 
-  // If initial status filter is storm-demo, activate the pill and views
-  if (currentStatusFilter === 'storm-demo') {
-    document.querySelectorAll('.status-pill').forEach(p => {
-      if (p.dataset.status === 'storm-demo') {
-        p.classList.add('active');
-      } else {
-        p.classList.remove('active');
-      }
-    });
-    toggleViewsBasedOnFilter();
-  }
+  // Sync the nav with the starting folder (storm-demo when leads were just imported)
+  setActiveFolder(currentFolder, currentView);
 
   // Clear storm leads button handler
   const btnClearStormLeads = document.getElementById('btn-clear-storm-leads');
@@ -188,7 +289,7 @@ window.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('storm_map_imported_county');
         localStorage.removeItem('storm_map_imported_state');
         updateStormLeadsBadge();
-        if (currentStatusFilter === 'storm-demo') {
+        if (currentView === 'storm-demo') {
           renderConversations();
           renderStormLeadsTable();
         }
@@ -222,6 +323,23 @@ window.addEventListener('DOMContentLoaded', () => {
     toDate = '';
     filterConversations();
   });
+
+  // Reset every secondary filter at once
+  const btnResetFilters = document.getElementById('btn-reset-filters');
+  if (btnResetFilters) {
+    btnResetFilters.addEventListener('click', () => {
+      filterFromDate.value = '';
+      filterToDate.value = '';
+      fromDate = '';
+      toDate = '';
+      currentStageFilter = 'all';
+      document.querySelectorAll('.stage-pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.stage === 'all');
+      });
+      searchInput.value = '';
+      filterConversations();
+    });
+  }
   chatForm.addEventListener('submit', handleSendMessage);
   btnDeleteChat.addEventListener('click', handleDeleteActiveConversation);
   btnNewChat.addEventListener('click', () => newChatModal.classList.add('open'));
@@ -494,7 +612,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (res.ok) {
         const data = await res.json();
         bulkMessageModal.classList.remove('open');
-        alert(`Success! Queued ${data.queued_count} bulk messages.`);
+        alert(`Success! Queued ${data.queued_count} bulk messages.` + skippedNote(data.skipped_count));
         
         // Clear selection & reload
         selectedConversations.clear();
@@ -580,7 +698,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (res.ok) {
           const data = await res.json();
           campaignModal.classList.remove('open');
-          alert(`Success! Queued ${data.queued_count} campaign messages.`);
+          alert(`Success! Queued ${data.queued_count} campaign messages.` + skippedNote(data.skipped_count));
           
           // Reload conversations
           await loadConversations();
@@ -597,6 +715,80 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Disposition bar: one click for No/Unqualified/Customer, modal for the scheduled ones
+  document.querySelectorAll('.dispo-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const disposition = btn.dataset.disposition;
+      if (!activeConversation || activeConversation.isLead) return;
+
+      if (disposition === 'appointment' || disposition === 'follow_up') {
+        openScheduleModal(disposition);
+        return;
+      }
+
+      // Clicking the disposition it already has clears it
+      if (activeConversation.disposition === disposition) {
+        await applyDisposition(null);
+        return;
+      }
+
+      btn.disabled = true;
+      await applyDisposition(disposition);
+      btn.disabled = false;
+    });
+  });
+
+  const btnClearDisposition = document.getElementById('btn-clear-disposition');
+  if (btnClearDisposition) {
+    btnClearDisposition.addEventListener('click', () => applyDisposition(null));
+  }
+
+  // Schedule modal
+  const scheduleModal = document.getElementById('schedule-modal');
+  const scheduleClose = document.getElementById('schedule-close');
+  const scheduleForm = document.getElementById('schedule-form');
+  const scheduleDatetime = document.getElementById('schedule-datetime');
+  const scheduleNote = document.getElementById('schedule-note');
+  const btnSaveSchedule = document.getElementById('btn-save-schedule');
+
+  scheduleClose.addEventListener('click', () => scheduleModal.classList.remove('open'));
+  scheduleModal.addEventListener('click', (e) => {
+    if (e.target === scheduleModal) scheduleModal.classList.remove('open');
+  });
+
+  document.querySelectorAll('.quick-pick').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.quick-pick').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      scheduleDatetime.value = toLocalInputValue(resolveQuickPick(chip.dataset.offset));
+    });
+  });
+
+  // Typing a custom time deselects the quick picks
+  scheduleDatetime.addEventListener('input', () => {
+    document.querySelectorAll('.quick-pick').forEach(c => c.classList.remove('active'));
+  });
+
+  scheduleForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!pendingDisposition || !scheduleDatetime.value) return;
+
+    btnSaveSchedule.disabled = true;
+    btnSaveSchedule.textContent = 'Saving...';
+
+    // datetime-local gives "YYYY-MM-DDTHH:mm"; store it the way SQLite datetimes look
+    const scheduledAt = scheduleDatetime.value.replace('T', ' ') + ':00';
+    const saved = await applyDisposition(pendingDisposition, scheduledAt, scheduleNote.value.trim() || null);
+
+    btnSaveSchedule.disabled = false;
+    btnSaveSchedule.textContent = 'Save';
+
+    if (saved) {
+      scheduleModal.classList.remove('open');
+      pendingDisposition = null;
+    }
+  });
 
   // Logout handler
   const btnLogout = document.getElementById('btn-logout');
@@ -623,6 +815,16 @@ async function loadConversations() {
     const res = await fetch('/api/conversations');
     conversations = await res.json();
     renderConversations();
+
+    // Keep the header badge in sync when a new reply changes the category
+    if (activeConversation && !activeConversation.isLead) {
+      const fresh = conversations.find(c => c.id === activeConversation.id);
+      if (fresh) {
+        Object.assign(activeConversation, fresh);
+        updateSentimentBadge(fresh);
+        updateDispositionBar(fresh);
+      }
+    }
   } catch (err) {
     console.error("Error loading conversations:", err);
     conversationsList.innerHTML = `<div class="list-placeholder error">Failed to load chats</div>`;
@@ -770,6 +972,9 @@ function handleWsMessage(payload) {
     case 'conversation_read':
       handleIncomingConversationRead(data);
       break;
+    case 'conversation_disposition':
+      handleIncomingDisposition(data);
+      break;
   }
 }
 
@@ -778,6 +983,18 @@ function handleIncomingConversationDeleted(data) {
     resetChatToWelcomeBox();
   }
   loadConversations();
+}
+
+// Another browser tab (or user) dispositioned a lead
+function handleIncomingDisposition(data) {
+  const conv = conversations.find(c => c.id === data.id);
+  if (conv) Object.assign(conv, data);
+
+  if (activeConversation && activeConversation.id === data.id) {
+    Object.assign(activeConversation, data);
+    updateDispositionBar(activeConversation);
+  }
+  renderConversations();
 }
 
 function handleIncomingConversationRead(data) {
@@ -856,46 +1073,71 @@ function handleIncomingMessageStatusUpdate(update) {
   loadRecentActivity();
 }
 
-function getFilteredConversations() {
-  const query = searchInput.value.toLowerCase().trim();
-  
-  if (currentStatusFilter === 'storm-demo') {
-    const leadsJson = localStorage.getItem('storm_map_imported_leads');
-    const leads = leadsJson ? JSON.parse(leadsJson) : [];
-    
-    return leads
-      .map((lead, index) => ({
-        id: `lead-${index}`,
-        phone_number: lead.phone,
-        name: lead.name,
-        isLead: true,
-        leadData: lead,
-        last_message_text: `${lead.stormType || 'Storm'} Lead · ${lead.confidence || 'High'} Conf`,
-        last_message_at: lead.stormDate,
-        unread: false
-      }))
-      .filter(c => {
-        const name = (c.name || '').toLowerCase();
-        const phone = c.phone_number.toLowerCase();
-        return name.includes(query) || phone.includes(query);
-      });
-  }
+// Open a folder (and optionally a specific view inside it)
+function setActiveFolder(folder, view = null) {
+  if (!FOLDERS[folder]) return;
 
-  return conversations.filter(c => {
+  currentFolder = folder;
+  currentView = view && FOLDERS[folder].views.includes(view)
+    ? view
+    : FOLDERS[folder].views[0];
+
+  document.querySelectorAll('.folder-tab').forEach(tab => {
+    const isActive = tab.dataset.folder === folder;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  // Show only the sub-tabs belonging to this folder
+  const subtabRow = document.getElementById('subtab-row');
+  const subtabs = document.querySelectorAll('.subtab');
+  const hasSubtabs = FOLDERS[folder].views.length > 1;
+
+  if (subtabRow) subtabRow.style.display = hasSubtabs ? 'flex' : 'none';
+  subtabs.forEach(st => {
+    st.style.display = st.dataset.parent === folder ? 'inline-flex' : 'none';
+    st.classList.toggle('active', st.dataset.view === currentView);
+  });
+
+  filterConversations();
+  toggleViewsBasedOnFilter();
+}
+
+// Switch view within the current folder
+function setActiveView(view) {
+  setActiveFolder(getFolderForView(view), view);
+}
+
+// Imported Storm Map / website demo leads, shaped like conversations
+function getStormDemoLeads() {
+  const leadsJson = localStorage.getItem('storm_map_imported_leads');
+  const leads = leadsJson ? JSON.parse(leadsJson) : [];
+
+  return leads.map((lead, index) => ({
+    id: `lead-${index}`,
+    phone_number: lead.phone,
+    name: lead.name,
+    isLead: true,
+    leadData: lead,
+    last_message_text: `${lead.stormType || 'Storm'} Lead · ${lead.confidence || 'High'} Conf`,
+    last_message_at: lead.stormDate,
+    unread: false
+  }));
+}
+
+// Search + stage + date filters, applied regardless of which tab is open.
+function applyBaseFilters(list) {
+  const query = searchInput.value.toLowerCase().trim();
+
+  return list.filter(c => {
     // 1. Search query filter
     const name = (c.name || '').toLowerCase();
-    const phone = c.phone_number.toLowerCase();
-    const matchesSearch = name.includes(query) || phone.includes(query);
-    if (!matchesSearch) return false;
+    const phone = (c.phone_number || '').toLowerCase();
+    if (query && !name.includes(query) && !phone.includes(query)) return false;
 
-    // 2. Status & Stage Filters
-    const isResponded = c.stage && c.stage.endsWith('-Responded');
-    const status = isResponded ? 'responded' : 'pending';
-    
-    if (currentStatusFilter !== status) return false;
-    
+    // 2. Stage filter
     if (currentStageFilter !== 'all') {
-      const stageBase = c.stage.replace('-Responded', '');
+      const stageBase = (c.stage || '').replace('-Responded', '');
       if (stageBase !== currentStageFilter) return false;
     }
 
@@ -910,23 +1152,149 @@ function getFilteredConversations() {
   });
 }
 
+function searchStormDemoLeads() {
+  const query = searchInput.value.toLowerCase().trim();
+  return getStormDemoLeads().filter(c => {
+    const name = (c.name || '').toLowerCase();
+    const phone = (c.phone_number || '').toLowerCase();
+    return !query || name.includes(query) || phone.includes(query);
+  });
+}
+
+function getFilteredConversations() {
+  if (currentView === 'storm-demo') {
+    return searchStormDemoLeads();
+  }
+
+  const list = applyBaseFilters(conversations)
+    .filter(c => getConversationBucket(c) === currentView);
+
+  // Appointments and follow-ups read as a schedule: soonest first
+  if (SCHEDULED_VIEWS.includes(currentView)) {
+    list.sort((a, b) => {
+      const aTime = a.scheduled_at ? new Date(a.scheduled_at.replace(' ', 'T')).getTime() : Infinity;
+      const bTime = b.scheduled_at ? new Date(b.scheduled_at.replace(' ', 'T')).getTime() : Infinity;
+      return aTime - bTime;
+    });
+  }
+
+  return list;
+}
+
+// Badge counts on every folder and sub-tab, honouring the search/stage/date filters.
+function updateTabCounts() {
+  const counts = {};
+  ALL_VIEWS.forEach(v => { counts[v] = 0; });
+
+  applyBaseFilters(conversations).forEach(c => {
+    const bucket = getConversationBucket(c);
+    if (bucket in counts) counts[bucket]++;
+  });
+  counts['storm-demo'] = searchStormDemoLeads().length;
+
+  // Sub-tab counts
+  Object.entries(counts).forEach(([view, value]) => {
+    const el = document.getElementById(`count-${view}`);
+    if (!el) return;
+    el.textContent = value;
+    el.classList.toggle('is-zero', value === 0);
+  });
+
+  // Folder counts are the sum of their views
+  Object.entries(FOLDERS).forEach(([folder, config]) => {
+    const el = document.getElementById(`count-folder-${folder}`);
+    if (!el) return;
+    const total = config.views.reduce((sum, v) => sum + (counts[v] || 0), 0);
+    el.textContent = total;
+    el.classList.toggle('is-zero', total === 0);
+  });
+}
+
+// Highlights the filter accordion when stage/date filters are narrowing the list.
+function updateActiveFiltersBadge() {
+  const badge = document.getElementById('filters-active-badge');
+  const accordion = document.getElementById('filters-accordion');
+  if (!badge || !accordion) return;
+
+  let active = 0;
+  if (currentStageFilter !== 'all') active++;
+  if (fromDate) active++;
+  if (toDate) active++;
+
+  badge.textContent = active;
+  badge.style.display = active > 0 ? 'inline-flex' : 'none';
+  accordion.classList.toggle('has-active-filters', active > 0);
+}
+
+// Friendly empty-state copy for each tab
+function getEmptyStateHtml() {
+  const query = searchInput.value.trim();
+  const hasNarrowingFilters = query || currentStageFilter !== 'all' || fromDate || toDate;
+
+  if (hasNarrowingFilters) {
+    return `
+      <div class="list-empty">
+        <div class="list-empty-title">No matches</div>
+        <p>Nothing in this tab matches your current search or filters.</p>
+      </div>`;
+  }
+
+  const copy = {
+    'new': {
+      title: 'Inbox zero',
+      body: 'New positive replies land here. Disposition one and it moves out of this tab.'
+    },
+    appointment: {
+      title: 'No appointments booked',
+      body: 'Open a reply and hit “Set Appointment” to book one.'
+    },
+    follow_up: {
+      title: 'No follow-ups scheduled',
+      body: 'Open a reply and hit “Follow-Up” to schedule a callback.'
+    },
+    customer: {
+      title: 'No customers yet',
+      body: 'Mark a realtor as a customer once they sign up.'
+    },
+    'no': {
+      title: 'No rejections',
+      body: 'Opt-outs like “No thanks” or “STOP” land here automatically.'
+    },
+    unqualified: {
+      title: 'Nothing unqualified',
+      body: 'Leads you mark as not a fit show up here.'
+    },
+    pending: {
+      title: 'Nothing pending',
+      body: 'Contacts you have messaged who have not replied yet appear here.'
+    },
+    'storm-demo': {
+      title: 'No web form leads',
+      body: 'Run a scan in the Storm Map app and click “Send Leads to SMS App”.'
+    }
+  }[currentView] || { title: 'Nothing here', body: '' };
+
+  return `
+    <div class="list-empty">
+      <div class="list-empty-title">${copy.title}</div>
+      <p>${copy.body}</p>
+    </div>`;
+}
+
 // 5. Render Sidebar conversations
 function renderConversations() {
   const convListHeader = document.getElementById('conv-list-header');
-  
-  if (conversations.length === 0) {
-    conversationsList.innerHTML = `<div class="list-placeholder">No conversations started</div>`;
-    if (convListHeader) convListHeader.style.display = 'none';
-    return;
-  }
+
+  updateTabCounts();
+  updateActiveFiltersBadge();
 
   conversationsList.innerHTML = '';
-  
+
   const filtered = getFilteredConversations();
 
-  // Update selection header
+  // Update selection header (bulk actions do not apply to un-imported leads)
   if (convListHeader) {
-    if (filtered.length > 0) {
+    if (filtered.length > 0 && currentView !== 'storm-demo') {
       convListHeader.style.display = 'flex';
       document.getElementById('visible-convs-count').textContent = filtered.length;
     } else {
@@ -935,55 +1303,88 @@ function renderConversations() {
   }
 
   if (filtered.length === 0) {
-    conversationsList.innerHTML = `<div class="list-placeholder">No matches found</div>`;
+    conversationsList.innerHTML = getEmptyStateHtml();
+    updateBulkActionBarUI(filtered);
     return;
   }
 
   filtered.forEach(c => {
     const isActive = activeConversation && activeConversation.id === c.id;
+    const bucket = c.isLead ? 'storm-demo' : getConversationBucket(c);
     const item = document.createElement('div');
-    item.className = `conversation-item ${isActive ? 'active' : ''}`;
+    item.className = `conversation-item bucket-${bucket} ${isActive ? 'active' : ''}`;
     item.dataset.id = c.id;
-    
+
     const initials = c.name ? c.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
     const displayName = c.name || c.phone_number;
-    
+
     // Format timestamp
     let timeStr = '';
     if (c.last_message_at) {
       timeStr = formatMessageTimestamp(c.last_message_at);
     }
 
-    const preview = c.last_message_text || 'No messages';
     const isUnread = c.unread === 1 || c.unread === '1' || c.unread === true;
-    const repliedDot = isUnread && (!activeConversation || activeConversation.id !== c.id) ? `<span class="conv-replied-dot" title="New Reply"></span>` : '';
+    const repliedDot = isUnread && (!activeConversation || activeConversation.id !== c.id) ? `<span class="conv-replied-dot" title="New reply"></span>` : '';
     const isChecked = selectedConversations.has(c.id);
 
-    item.innerHTML = `
+    // Scheduled views read as a diary; everything else shows the contact's reply
+    const isScheduled = SCHEDULED_VIEWS.includes(bucket) && c.scheduled_at;
+    const showsReply = !isScheduled && bucket !== 'pending' && !c.isLead && c.last_inbound_text;
+
+    let preview;
+    let previewIcon = '';
+    let overdueClass = '';
+
+    if (isScheduled) {
+      const due = new Date(c.scheduled_at.replace(' ', 'T'));
+      const isOverdue = due.getTime() < Date.now();
+      overdueClass = isOverdue ? ' is-overdue' : '';
+      preview = `${isOverdue ? 'Overdue · ' : ''}${formatScheduleTimestamp(due)}`;
+      previewIcon = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="conv-schedule-icon"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
+    } else if (showsReply) {
+      preview = c.last_inbound_text;
+      previewIcon = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="conv-reply-icon"><polyline points="9 17 4 12 9 7"></polyline><path d="M20 18v-2a4 4 0 0 0-4-4H4"></path></svg>`;
+    } else {
+      preview = c.last_message_text || 'No messages';
+    }
+
+    // Stage chip (Stage 1/2/3) so the follow-up depth is visible at a glance
+    const stageBase = (c.stage || '').replace('-Responded', '');
+    const stageChip = !c.isLead && stageBase
+      ? `<span class="conv-stage-chip" title="Follow-up ${stageBase}">${stageBase.replace('Stage ', 'S')}</span>`
+      : '';
+
+    const checkboxHtml = c.isLead ? '' : `
       <label class="conv-checkbox-container" onclick="event.stopPropagation()">
         <input type="checkbox" class="conv-select-checkbox" data-id="${c.id}" ${isChecked ? 'checked' : ''}>
         <span class="checkbox-custom"></span>
-      </label>
+      </label>`;
+
+    item.innerHTML = `
+      ${checkboxHtml}
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
-          <span class="conv-name">${displayName}${repliedDot}</span>
+          <span class="conv-name">${escapeHTML(displayName)}${repliedDot}</span>
           <span class="conv-time">${timeStr}</span>
         </div>
-        <div class="conv-preview">${preview}</div>
+        <div class="conv-preview${overdueClass}">${previewIcon}<span class="conv-preview-text">${escapeHTML(preview)}</span>${stageChip}</div>
       </div>
     `;
 
     // Handle checkbox change
     const checkbox = item.querySelector('.conv-select-checkbox');
-    checkbox.addEventListener('change', (e) => {
-      if (e.target.checked) {
-        selectedConversations.add(c.id);
-      } else {
-        selectedConversations.delete(c.id);
-      }
-      updateBulkActionBarUI(filtered);
-    });
+    if (checkbox) {
+      checkbox.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          selectedConversations.add(c.id);
+        } else {
+          selectedConversations.delete(c.id);
+        }
+        updateBulkActionBarUI(filtered);
+      });
+    }
 
     item.addEventListener('click', () => selectConversation(c));
     conversationsList.appendChild(item);
@@ -997,10 +1398,166 @@ function filterConversations() {
   renderConversations();
 }
 
+/* ------------------------------------------------------------------
+ * Dispositions
+ * ------------------------------------------------------------------ */
+
+// "Aug 5, 2:00 PM" — used for appointment/follow-up times
+function formatScheduleTimestamp(dateInput) {
+  if (!dateInput) return '';
+  const date = dateInput instanceof Date ? dateInput : new Date(String(dateInput).replace(' ', 'T'));
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+}
+
+// Local date/time formatted for a datetime-local input and for SQLite storage
+function toLocalInputValue(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Refreshes the disposition bar for the active conversation
+function updateDispositionBar(conv) {
+  const bar = document.getElementById('disposition-bar');
+  const current = document.getElementById('disposition-current');
+  const chip = document.getElementById('disposition-chip');
+  if (!bar) return;
+
+  // Un-imported leads have no conversation record to disposition yet
+  if (!conv || conv.isLead) {
+    bar.style.display = 'none';
+    return;
+  }
+
+  bar.style.display = 'flex';
+
+  document.querySelectorAll('.dispo-btn').forEach(btn => {
+    btn.classList.toggle('is-set', btn.dataset.disposition === conv.disposition);
+  });
+
+  if (conv.disposition && DISPOSITION_LABELS[conv.disposition]) {
+    let text = DISPOSITION_LABELS[conv.disposition];
+    if (conv.scheduled_at) text += ` · ${formatScheduleTimestamp(conv.scheduled_at)}`;
+    chip.textContent = text;
+    chip.className = `disposition-chip dispo-${conv.disposition}`;
+    current.style.display = 'flex';
+  } else {
+    current.style.display = 'none';
+  }
+}
+
+// Sends the disposition to the server and refreshes the UI
+async function applyDisposition(disposition, scheduledAt = null, note = null) {
+  if (!activeConversation || activeConversation.isLead) return false;
+
+  try {
+    const res = await fetch(`/api/conversations/${activeConversation.id}/disposition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disposition, scheduled_at: scheduledAt, note })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert('Could not save disposition: ' + (err.error || res.statusText));
+      return false;
+    }
+
+    const updated = await res.json();
+    Object.assign(activeConversation, updated);
+    updateDispositionBar(activeConversation);
+    updateSentimentBadge(activeConversation);
+    await loadConversations();
+    return true;
+  } catch (err) {
+    console.error('Disposition error:', err);
+    alert('Connection error saving disposition.');
+    return false;
+  }
+}
+
+// Opens the date/time modal for the two scheduled dispositions
+function openScheduleModal(disposition) {
+  if (!activeConversation) return;
+
+  pendingDisposition = disposition;
+
+  const modal = document.getElementById('schedule-modal');
+  const title = document.getElementById('schedule-modal-title');
+  const contact = document.getElementById('schedule-contact');
+  const input = document.getElementById('schedule-datetime');
+  const note = document.getElementById('schedule-note');
+
+  title.textContent = disposition === 'appointment' ? 'Set Appointment' : 'Schedule Follow-Up';
+  contact.textContent = `${activeConversation.name || activeConversation.phone_number} · ${activeConversation.phone_number}`;
+
+  // Reuse the existing time when re-scheduling, otherwise pick a sensible default
+  if (activeConversation.disposition === disposition && activeConversation.scheduled_at) {
+    input.value = toLocalInputValue(new Date(activeConversation.scheduled_at.replace(' ', 'T')));
+  } else {
+    const preset = new Date();
+    preset.setDate(preset.getDate() + (disposition === 'appointment' ? 1 : 3));
+    preset.setHours(10, 0, 0, 0);
+    input.value = toLocalInputValue(preset);
+  }
+
+  note.value = activeConversation.disposition_note || '';
+  document.querySelectorAll('.quick-pick').forEach(q => q.classList.remove('active'));
+  modal.classList.add('open');
+}
+
+// Turns a quick-pick chip into a concrete date/time
+function resolveQuickPick(offset) {
+  const date = new Date();
+  if (offset === '2h') {
+    date.setHours(date.getHours() + 2, 0, 0, 0);
+  } else if (offset === 'tomorrow') {
+    date.setDate(date.getDate() + 1);
+    date.setHours(10, 0, 0, 0);
+  } else if (offset === '2d') {
+    date.setDate(date.getDate() + 2);
+    date.setHours(10, 0, 0, 0);
+  } else if (offset === '7d') {
+    date.setDate(date.getDate() + 7);
+    date.setHours(10, 0, 0, 0);
+  }
+  return date;
+}
+
+// Shows Positive / Negative / Awaiting reply next to the contact name
+function updateSentimentBadge(conv) {
+  const badge = document.getElementById('active-sentiment-badge');
+  if (!badge) return;
+
+  if (!conv || conv.isLead) {
+    badge.style.display = 'none';
+    return;
+  }
+
+  // Independent of the disposition: this describes the contact's last reply
+  const hasResponded = conv.stage && conv.stage.endsWith('-Responded');
+  let tone = 'pending';
+  if (hasResponded) {
+    tone = classifyReply(conv.last_inbound_text) === 'negative' ? 'negative' : 'positive';
+  }
+
+  badge.textContent = {
+    positive: 'Positive reply',
+    negative: 'Opted out',
+    pending: 'Awaiting reply'
+  }[tone];
+  badge.className = `sentiment-badge ${tone}`;
+  badge.style.display = 'inline-flex';
+}
+
 // 6. Select active chat
 async function selectConversation(conv) {
   activeConversation = conv;
-  
+  updateSentimentBadge(conv);
+  updateDispositionBar(conv);
+
   if (conv && conv.isLead) {
     // UI Selection styling
     document.querySelectorAll('.conversation-item').forEach(el => {
@@ -1014,7 +1571,7 @@ async function selectConversation(conv) {
     if (stormLeadsView) stormLeadsView.style.display = 'none';
     
     chatHeader.style.display = 'flex';
-    messagesFeed.style.display = 'block';
+    messagesFeed.style.display = 'flex';
     chatComposerContainer.style.display = 'block';
     
     // Setup Chat Header
@@ -1261,11 +1818,7 @@ async function handleSendMessage(e) {
       updateCharCounter(messageInput, chatCharCounter);
       
       if (activeConversation.isLead) {
-        document.querySelectorAll('.status-pill').forEach(p => {
-          if (p.dataset.status === 'pending') {
-            p.click();
-          }
-        });
+        setActiveFolder('pending');
         setTimeout(async () => {
           await loadConversations();
           const newConv = conversations.find(c => c.id === convId);
@@ -1313,7 +1866,9 @@ async function handleDeleteActiveConversation() {
 
 function resetChatToWelcomeBox() {
   activeConversation = null;
-  
+  updateSentimentBadge(null);
+  updateDispositionBar(null);
+
   // Reset active conversation sidebar selection styling
   document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
 
@@ -1419,9 +1974,426 @@ async function handleSaveSettings(e) {
   }
 }
 
+/* ==================================================================
+ * Performance Stats
+ * ================================================================== */
+
+function toDateInputValue(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+// Resolves a preset key to a [from, to] pair of YYYY-MM-DD strings.
+// Weeks start on Monday.
+function resolveDatePreset(preset) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const startOfWeek = (ref) => {
+    const d = new Date(ref);
+    const dayOfWeek = (d.getDay() + 6) % 7; // Monday = 0
+    d.setDate(d.getDate() - dayOfWeek);
+    return d;
+  };
+  const shift = (ref, days) => {
+    const d = new Date(ref);
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+
+  let from, to;
+  switch (preset) {
+    case 'today':
+      from = to = today;
+      break;
+    case 'yesterday':
+      from = to = shift(today, -1);
+      break;
+    case 'this-week':
+      from = startOfWeek(today);
+      to = today;
+      break;
+    case 'last-week':
+      from = shift(startOfWeek(today), -7);
+      to = shift(from, 6);
+      break;
+    case 'this-month':
+      from = new Date(today.getFullYear(), today.getMonth(), 1);
+      to = today;
+      break;
+    case 'last-month':
+      from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      to = new Date(today.getFullYear(), today.getMonth(), 0); // day 0 = last day of previous month
+      break;
+    case 'this-year':
+      from = new Date(today.getFullYear(), 0, 1);
+      to = today;
+      break;
+    case 'last-year':
+      from = new Date(today.getFullYear() - 1, 0, 1);
+      to = new Date(today.getFullYear() - 1, 11, 31);
+      break;
+    default:
+      from = new Date(today.getFullYear(), today.getMonth(), 1);
+      to = today;
+  }
+
+  return [toDateInputValue(from), toDateInputValue(to)];
+}
+
+// "Jul 1 – Jul 31, 2026", collapsing to a single date when the range is one day
+function formatRangeLabel(from, to) {
+  const parse = s => new Date(s + 'T00:00:00');
+  const fromDate = parse(from);
+  const toDate = parse(to);
+  const opts = { month: 'short', day: 'numeric' };
+
+  if (from === to) {
+    return fromDate.toLocaleDateString([], { ...opts, year: 'numeric' });
+  }
+  const sameYear = fromDate.getFullYear() === toDate.getFullYear();
+  const left = fromDate.toLocaleDateString([], sameYear ? opts : { ...opts, year: 'numeric' });
+  const right = toDate.toLocaleDateString([], { ...opts, year: 'numeric' });
+  return `${left} – ${right}`;
+}
+
+function formatDuration(minutes) {
+  if (minutes === null || minutes === undefined) return '—';
+  if (minutes < 1) return 'under a minute';
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.round(hours * 10) / 10} hr`;
+  return `${Math.round((hours / 24) * 10) / 10} days`;
+}
+
+function formatHour(hour) {
+  if (hour === null || hour === undefined) return '—';
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display} ${suffix}`;
+}
+
+// Collapses the daily series into at most ~30 buckets so a full year stays readable
+function bucketDailySeries(daily, from, to) {
+  const spanDays = Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 86400000) + 1;
+  const byDay = {};
+  daily.forEach(d => { byDay[d.day] = d; });
+
+  // Fill gaps so quiet days still occupy space on the axis
+  const filled = [];
+  const cursor = new Date(from + 'T00:00:00');
+  for (let i = 0; i < spanDays; i++) {
+    const key = toDateInputValue(cursor);
+    const row = byDay[key];
+    filled.push({ day: key, sent: row ? row.sent : 0, replies: row ? row.replies : 0 });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let unit = 'day';
+  if (spanDays > 210) unit = 'month';
+  else if (spanDays > 45) unit = 'week';
+
+  if (unit === 'day') {
+    return { unit, buckets: filled.map(d => ({ label: d.day, sent: d.sent, replies: d.replies })) };
+  }
+
+  // Group on real calendar boundaries so the axis labels mean what they say
+  const groups = new Map();
+  filled.forEach(d => {
+    let key;
+    if (unit === 'month') {
+      key = d.day.slice(0, 7) + '-01';
+    } else {
+      const date = new Date(d.day + 'T00:00:00');
+      date.setDate(date.getDate() - ((date.getDay() + 6) % 7)); // back to Monday
+      key = toDateInputValue(date);
+    }
+    if (!groups.has(key)) groups.set(key, { label: key, sent: 0, replies: 0 });
+    const bucket = groups.get(key);
+    bucket.sent += d.sent;
+    bucket.replies += d.replies;
+  });
+
+  return { unit, buckets: Array.from(groups.values()) };
+}
+
+// Hand-rolled SVG bar chart — no external charting dependency.
+// Drawn in real pixel units so labels are never distorted by scaling.
+let lastChartData = null;
+
+function renderStatsChart(daily, from, to) {
+  const container = document.getElementById('stats-chart');
+  if (!container) return;
+
+  lastChartData = { daily, from, to };
+
+  const { unit, buckets } = bucketDailySeries(daily, from, to);
+
+  if (buckets.every(b => b.sent === 0 && b.replies === 0)) {
+    container.innerHTML = `<div class="chart-empty">No messages in this period.</div>`;
+    return;
+  }
+
+  const width = Math.max(320, container.clientWidth);
+  const height = Math.max(160, container.clientHeight);
+  const padLeft = 34;
+  const padRight = 6;
+  const padTop = 8;
+  const padBottom = 22;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+  const baseline = padTop + plotHeight;
+
+  const max = Math.max(1, ...buckets.map(b => Math.max(b.sent, b.replies)));
+  const slot = plotWidth / buckets.length;
+  const barWidth = Math.max(2, Math.min(18, slot * 0.36));
+
+  const labelFor = (label) => {
+    const d = new Date(label + 'T00:00:00');
+    if (unit === 'month') return d.toLocaleDateString([], { month: 'short' });
+    return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
+  };
+  const tipFor = (b) => {
+    const prefix = unit === 'week' ? 'Week of ' : '';
+    const replies = `${b.replies.toLocaleString()} ${b.replies === 1 ? 'reply' : 'replies'}`;
+    return `${prefix}${labelFor(b.label)} — ${b.sent.toLocaleString()} delivered, ${replies}`;
+  };
+
+  // Keep axis labels from colliding: roughly one per 46px
+  const labelStep = Math.max(1, Math.ceil(buckets.length / Math.floor(plotWidth / 46)));
+
+  let bars = '';
+  let labels = '';
+  buckets.forEach((b, i) => {
+    const centre = padLeft + slot * i + slot / 2;
+    const sentH = (b.sent / max) * plotHeight;
+    const replyH = (b.replies / max) * plotHeight;
+    const tip = tipFor(b);
+
+    bars += `<rect class="bar-sent" x="${(centre - barWidth - 1).toFixed(1)}" y="${(baseline - sentH).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(sentH, b.sent ? 1.5 : 0).toFixed(1)}" rx="1.5"><title>${tip}</title></rect>`;
+    bars += `<rect class="bar-replies" x="${(centre + 1).toFixed(1)}" y="${(baseline - replyH).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(replyH, b.replies ? 1.5 : 0).toFixed(1)}" rx="1.5"><title>${tip}</title></rect>`;
+
+    if (i % labelStep === 0) {
+      labels += `<text class="axis-label" x="${centre.toFixed(1)}" y="${(height - 6).toFixed(1)}" text-anchor="middle">${labelFor(b.label)}</text>`;
+    }
+  });
+
+  // Horizontal gridlines with value labels
+  let grid = '';
+  [0, 0.5, 1].forEach(fraction => {
+    const y = baseline - fraction * plotHeight;
+    grid += `<line class="grid-line" x1="${padLeft}" y1="${y.toFixed(1)}" x2="${(width - padRight).toFixed(1)}" y2="${y.toFixed(1)}"></line>`;
+    grid += `<text class="axis-label" x="${padLeft - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${Math.round(max * fraction).toLocaleString()}</text>`;
+  });
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="stats-chart-svg" role="img" aria-label="Messages delivered and replies received over time">
+      ${grid}${bars}${labels}
+    </svg>`;
+}
+
+// The chart is sized in pixels, so it has to be redrawn when the window changes
+window.addEventListener('resize', () => {
+  const overlay = document.getElementById('stats-overlay');
+  if (lastChartData && overlay && overlay.classList.contains('open')) {
+    renderStatsChart(lastChartData.daily, lastChartData.from, lastChartData.to);
+  }
+});
+
+function renderFunnel(stats) {
+  const container = document.getElementById('stats-funnel');
+  if (!container) return;
+
+  const steps = [
+    { label: 'Delivered', value: stats.sent.delivered, cls: 'step-delivered' },
+    { label: 'Contacts Reached', value: stats.sent.contacts_reached, cls: 'step-contacts' },
+    { label: 'Replied', value: stats.responses.unique_responders, cls: 'step-replied' },
+    { label: 'Positive', value: stats.responses.positive_responders, cls: 'step-positive' },
+    { label: 'Appointments', value: stats.dispositions.appointment, cls: 'step-appointment' },
+    { label: 'Customers', value: stats.dispositions.customer, cls: 'step-customer' }
+  ];
+
+  const top = Math.max(1, steps[0].value);
+
+  container.innerHTML = steps.map((step, i) => {
+    const width = Math.max(2, (step.value / top) * 100);
+    const previous = i === 0 ? null : steps[i - 1].value;
+    const conversion = previous > 0 ? `${Math.round((step.value / previous) * 1000) / 10}%` : (i === 0 ? '' : '—');
+    return `
+      <div class="funnel-step">
+        <div class="funnel-step-head">
+          <span class="funnel-label">${step.label}</span>
+          <span class="funnel-value">${step.value.toLocaleString()}${conversion ? `<span class="funnel-conv">${conversion}</span>` : ''}</span>
+        </div>
+        <div class="funnel-track"><div class="funnel-fill ${step.cls}" style="width: ${width}%"></div></div>
+      </div>`;
+  }).join('');
+}
+
+function renderDispositionBreakdown(dispositions) {
+  const container = document.getElementById('stats-dispositions');
+  if (!container) return;
+
+  const order = [
+    ['appointment', 'Appointments', 'dispo-appointment'],
+    ['follow_up', 'Follow-Ups', 'dispo-follow_up'],
+    ['customer', 'Customers', 'dispo-customer'],
+    ['no', 'No', 'dispo-no'],
+    ['unqualified', 'Unqualified', 'dispo-unqualified']
+  ];
+
+  const total = order.reduce((sum, [key]) => sum + (dispositions[key] || 0), 0);
+
+  container.innerHTML = order.map(([key, label, cls]) => {
+    const value = dispositions[key] || 0;
+    const share = total > 0 ? Math.round((value / total) * 100) : 0;
+    return `
+      <div class="disposition-stat ${cls}">
+        <div class="disposition-stat-value">${value.toLocaleString()}</div>
+        <div class="disposition-stat-label">${label}</div>
+        <div class="disposition-stat-bar"><span style="width: ${share}%"></span></div>
+      </div>`;
+  }).join('');
+}
+
+function renderStats(stats) {
+  const num = n => (n || 0).toLocaleString();
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+
+  set('stats-range-label', formatRangeLabel(stats.from, stats.to));
+
+  // Headline KPIs
+  set('kpi-sent', num(stats.sent.attempted));
+  set('kpi-sent-sub', `${num(stats.sent.delivered)} delivered · ${num(stats.sent.failed)} failed`);
+
+  set('kpi-delivered', num(stats.sent.delivered));
+  set('kpi-delivered-sub', `${stats.sent.delivery_rate}% delivery rate`);
+
+  set('kpi-responses', num(stats.responses.total));
+  set('kpi-responses-sub', `${num(stats.responses.unique_responders)} contacts · ${stats.responses.response_rate}% reply rate`);
+
+  set('kpi-positive', num(stats.responses.positive));
+  set('kpi-positive-rate', `${stats.responses.positive_rate_of_replies}%`);
+  set('kpi-positive-sub', `${stats.responses.positive_rate_of_replies}% of replies · ${stats.responses.positive_rate_of_sent}% of contacts reached`);
+
+  set('kpi-negative', num(stats.responses.negative));
+  set('kpi-negative-rate', `${stats.responses.negative_rate_of_replies}%`);
+  set('kpi-negative-sub', `${stats.responses.negative_rate_of_replies}% of replies`);
+
+  // Secondary metrics
+  set('ms-contacts', num(stats.sent.contacts_reached));
+  set('ms-new-leads', num(stats.new_leads));
+  set('ms-failed', num(stats.sent.failed));
+  set('ms-inflight', num(stats.sent.in_flight));
+  set('ms-reply-time', formatDuration(stats.avg_reply_minutes));
+  set('ms-peak-hour', formatHour(stats.peak_reply_hour));
+
+  renderStatsChart(stats.daily, stats.from, stats.to);
+  renderFunnel(stats);
+  renderDispositionBreakdown(stats.dispositions);
+}
+
+async function loadStats() {
+  const from = document.getElementById('stats-from').value;
+  const to = document.getElementById('stats-to').value;
+  const loading = document.getElementById('stats-loading');
+  const content = document.getElementById('stats-content');
+
+  if (!from || !to) return;
+  if (from > to) {
+    loading.textContent = 'The "From" date must not be after the "To" date.';
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+
+  loading.textContent = 'Loading performance data…';
+  loading.style.display = 'block';
+
+  try {
+    const res = await fetch(`/api/stats?from=${from}&to=${to}`);
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to load stats');
+    }
+    const stats = await res.json();
+    renderStats(stats);
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (err) {
+    console.error('Stats error:', err);
+    loading.textContent = 'Could not load performance data.';
+    content.style.display = 'none';
+  }
+}
+
+function applyStatsPreset(preset) {
+  const [from, to] = resolveDatePreset(preset);
+  document.getElementById('stats-from').value = from;
+  document.getElementById('stats-to').value = to;
+  document.querySelectorAll('.stats-preset').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.preset === preset);
+  });
+  loadStats();
+}
+
+function setupStatsPanel() {
+  const overlay = document.getElementById('stats-overlay');
+  const btnOpen = document.getElementById('btn-open-stats');
+  const btnClose = document.getElementById('stats-close');
+  const btnApply = document.getElementById('btn-apply-stats');
+  const fromInput = document.getElementById('stats-from');
+  const toInput = document.getElementById('stats-to');
+  if (!overlay || !btnOpen) return;
+
+  btnOpen.addEventListener('click', () => {
+    overlay.classList.add('open');
+    // Default to this month on first open, then keep whatever the user picked
+    if (!fromInput.value || !toInput.value) {
+      applyStatsPreset('this-month');
+    } else {
+      loadStats();
+    }
+  });
+
+  const close = () => overlay.classList.remove('open');
+  btnClose.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.classList.contains('open')) close();
+  });
+
+  document.querySelectorAll('.stats-preset').forEach(btn => {
+    btn.addEventListener('click', () => applyStatsPreset(btn.dataset.preset));
+  });
+
+  // Hand-picking dates clears the preset selection
+  [fromInput, toInput].forEach(input => {
+    input.addEventListener('change', () => {
+      document.querySelectorAll('.stats-preset').forEach(b => b.classList.remove('active'));
+      loadStats();
+    });
+  });
+
+  btnApply.addEventListener('click', loadStats);
+}
+
+// Bulk sends skip opted-out and closed contacts; say so rather than silently dropping them.
+function skippedNote(count) {
+  if (!count) return '';
+  return `
+
+${count} contact${count === 1 ? ' was' : 's were'} skipped: opted out, or marked No / Unqualified / Customer. Open a conversation to message them individually.`;
+}
+
 // Escaping HTML utility
 function escapeHTML(str) {
-  return str
+  return String(str == null ? '' : str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -1583,7 +2555,7 @@ async function handleUploadLeadsSubmit(e) {
     if (res.ok) {
       const data = await res.json();
       uploadLeadsModal.classList.remove('open');
-      alert(`Success! Imported ${data.imported_count} leads and queued ${data.queued_count} messages.`);
+      alert(`Success! Imported ${data.imported_count} leads and queued ${data.queued_count} messages.` + skippedNote(data.skipped_count));
       
       // Refresh app state
       await loadConversations();
@@ -1823,11 +2795,12 @@ function formatRelativeTime(dateStr) {
 function toggleViewsBasedOnFilter() {
   const stormLeadsView = document.getElementById('storm-leads-view');
   
-  if (currentStatusFilter === 'storm-demo') {
+  if (currentView === 'storm-demo') {
     chatHeader.style.display = 'none';
     messagesFeed.style.display = 'none';
     chatComposerContainer.style.display = 'none';
-    
+    updateDispositionBar(null);
+
     if (stormLeadsView) {
       stormLeadsView.style.display = 'flex';
       renderStormLeadsTable();
@@ -1835,11 +2808,11 @@ function toggleViewsBasedOnFilter() {
   } else {
     if (activeConversation && !activeConversation.isLead) {
       chatHeader.style.display = 'flex';
-      messagesFeed.style.display = 'block';
+      messagesFeed.style.display = 'flex';
       chatComposerContainer.style.display = 'block';
     } else {
       chatHeader.style.display = 'flex';
-      messagesFeed.style.display = 'block';
+      messagesFeed.style.display = 'flex';
       chatComposerContainer.style.display = 'none';
       if (activeConversation && activeConversation.isLead) {
         resetChatToWelcomeBox();
@@ -1913,17 +2886,6 @@ function renderStormLeadsTable() {
 }
 
 function updateStormLeadsBadge() {
-  const badge = document.getElementById('storm-demo-count');
-  const leadsJson = localStorage.getItem('storm_map_imported_leads');
-  const leads = leadsJson ? JSON.parse(leadsJson) : [];
-  
-  if (badge) {
-    if (leads.length > 0) {
-      badge.textContent = leads.length;
-      badge.style.display = 'inline-block';
-    } else {
-      badge.style.display = 'none';
-    }
-  }
+  updateTabCounts();
 }
 
