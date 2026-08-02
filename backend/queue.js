@@ -16,6 +16,14 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
+/**
+ * Errors that will never succeed on a retry. Retrying a missing password
+ * three times with backoff just delays the failure and floods the log.
+ */
+function isPermanentError(err) {
+  return /not configured|Invalid credentials|401|403/i.test(err.message || '');
+}
+
 // SMS Send retry engine
 async function sendSmsWithRetry(sendFn, maxRetries = 3, baseDelayMs = 2000) {
   let attempt = 0;
@@ -24,6 +32,10 @@ async function sendSmsWithRetry(sendFn, maxRetries = 3, baseDelayMs = 2000) {
       return await sendFn();
     } catch (err) {
       attempt++;
+      if (isPermanentError(err)) {
+        console.error(`SMS send abandoned (configuration error): ${err.message}`);
+        throw err;
+      }
       console.warn(`SMS Send Attempt ${attempt} failed: ${err.message}`);
       if (attempt >= maxRetries) {
         throw err;

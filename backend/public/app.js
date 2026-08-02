@@ -841,6 +841,13 @@ async function loadConversations() {
     conversations = await res.json();
     renderConversations();
 
+    // Reminders are derived from `conversations`. Without this the first check
+    // could run before the list arrived, leaving a due appointment unflagged
+    // until the next 60-second poll.
+    if (typeof checkReminders === 'function' && remindersReady) {
+      checkReminders();
+    }
+
     // Keep the header badge in sync when a new reply changes the category
     if (activeConversation && !activeConversation.isLead) {
       const fresh = conversations.find(c => c.id === activeConversation.id);
@@ -2257,6 +2264,7 @@ function sendBrowserNotification(reminder) {
 }
 
 let notifiedKeys = new Set();
+let remindersReady = false;
 
 async function checkReminders() {
   const due = getDueReminders();
@@ -2301,6 +2309,7 @@ async function setupReminders() {
     sync();
   }
 
+  remindersReady = true;
   checkReminders();
   if (reminderTimer) clearInterval(reminderTimer);
   reminderTimer = setInterval(checkReminders, REMINDER_POLL_MS);
@@ -2609,15 +2618,16 @@ function renderStats(stats) {
       'Outbound messages created in this period, whatever their outcome');
 
   // Carrier acceptance is NOT delivery. Both are shown, labelled honestly.
+  // The carrier on this route does not return delivery receipts, so handset
+  // delivery is unknowable. A separate "Delivered" figure would sit at ~0
+  // forever and read as catastrophic failure, so confirmed deliveries are
+  // mentioned only when receipts genuinely arrive.
   set('kpi-accepted', num(stats.sent.carrier_accepted));
-  set('kpi-accepted-sub', `${stats.sent.acceptance_rate}% acceptance rate`, defs.acceptance_rate);
-
-  set('kpi-delivered', num(stats.sent.delivered));
-  set('kpi-delivered-sub',
+  set('kpi-accepted-sub',
       stats.sent.delivered > 0
-        ? `${stats.sent.confirmed_delivery_rate}% confirmed \u00b7 ${num(stats.sent.unknown_delivery)} unconfirmed`
-        : `No delivery receipts \u00b7 ${num(stats.sent.unknown_delivery)} unconfirmed`,
-      defs.confirmed_delivery_rate);
+        ? `${stats.sent.acceptance_rate}% accepted \u00b7 ${num(stats.sent.delivered)} delivery-confirmed`
+        : `${stats.sent.acceptance_rate}% accepted by the carrier`,
+      defs.acceptance_rate);
 
   set('kpi-responses', num(stats.responses.total_messages));
   set('kpi-responses-sub',
