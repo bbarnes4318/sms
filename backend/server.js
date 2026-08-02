@@ -20,6 +20,14 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // Helper to parse cookies
+// Session cookies get Secure when the request arrived over HTTPS (behind
+// nginx that shows up as x-forwarded-proto).
+function sessionCookie(req, token, maxAgeSeconds) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0].trim();
+  const secure = proto === 'https' ? ' Secure;' : '';
+  return `session_token=${token}; Path=/; HttpOnly;${secure} Max-Age=${maxAgeSeconds}; SameSite=Lax`;
+}
+
 function getCookie(cookieString, name) {
   if (!cookieString) return null;
   const match = cookieString.match(new RegExp('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)'));
@@ -115,12 +123,48 @@ app.post('/api/auth/signup', (req, res) => {
     }
     db.createUser(username, password);
     const session = db.createSession(username);
-    res.setHeader('Set-Cookie', `session_token=${session.token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    res.setHeader('Set-Cookie', sessionCookie(req, session.token, 7 * 24 * 60 * 60));
     res.json({ success: true, username: session.username });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * Login rate limiting: a small in-memory sliding window per client IP.
+ * Enough to stop credential stuffing against a single-admin deployment
+ * without adding a dependency or shared store.
+ */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const loginAttempts = new Map();
+
+function clientIp(req) {
+  return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+         req.socket.remoteAddress || 'unknown';
+}
+
+function loginRateLimited(req) {
+  const ip = clientIp(req);
+  const now = Date.now();
+  const recent = (loginAttempts.get(ip) || []).filter(t => now - t < LOGIN_WINDOW_MS);
+  loginAttempts.set(ip, recent);
+
+  // Keep the map from growing without bound on a long-lived process.
+  if (loginAttempts.size > 5000) {
+    for (const [key, times] of loginAttempts) {
+      if (!times.length || now - times[times.length - 1] > LOGIN_WINDOW_MS) loginAttempts.delete(key);
+    }
+  }
+  return recent.length >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordFailedLogin(req) {
+  const ip = clientIp(req);
+  const times = loginAttempts.get(ip) || [];
+  times.push(Date.now());
+  loginAttempts.set(ip, times);
+}
 
 // Login
 app.post('/api/auth/login', (req, res) => {
@@ -128,13 +172,18 @@ app.post('/api/auth/login', (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
   }
+  if (loginRateLimited(req)) {
+    console.warn(`[auth] rate limited login attempts from ${clientIp(req)}`);
+    return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
+  }
   try {
     const user = db.validateUser(username, password);
     if (!user) {
+      recordFailedLogin(req);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     const session = db.createSession(user.username);
-    res.setHeader('Set-Cookie', `session_token=${session.token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    res.setHeader('Set-Cookie', sessionCookie(req, session.token, 7 * 24 * 60 * 60));
     res.json({ success: true, username: session.username });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -148,7 +197,7 @@ app.post('/api/auth/logout', (req, res) => {
     if (token) {
       db.deleteSession(token);
     }
-    res.setHeader('Set-Cookie', `session_token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax`);
+    res.setHeader('Set-Cookie', sessionCookie(req, '', 0));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -401,6 +450,35 @@ app.post('/api/conversations/:id/opt-out', (req, res) => {
     res.json(updated);
   } catch (err) {
     return fail(res, 400, err.message, err);
+  }
+});
+
+// 3.6e. Reminder state. Persisted server-side so a reminder fires once per
+// tier and survives page refreshes and server restarts.
+app.get('/api/reminders', (req, res) => {
+  try {
+    res.json({ notified: db.getNotifiedReminders() });
+  } catch (err) {
+    return fail(res, 500, 'Could not load reminder state', err);
+  }
+});
+
+app.post('/api/reminders/ack', (req, res) => {
+  const convId = parseConversationId(req.body.conversation_id);
+  const { scheduled_at, tier } = req.body;
+
+  if (convId === null || typeof scheduled_at !== 'string' || typeof tier !== 'string') {
+    return res.status(400).json({ error: 'conversation_id, scheduled_at and tier are required' });
+  }
+  if (!db.REMINDER_TIERS.includes(tier)) {
+    return res.status(400).json({ error: `Unknown reminder tier: ${tier}` });
+  }
+
+  try {
+    db.acknowledgeReminder(convId, scheduled_at, tier);
+    res.json({ success: true });
+  } catch (err) {
+    return fail(res, 500, 'Could not record reminder', err);
   }
 });
 

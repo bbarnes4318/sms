@@ -18,60 +18,25 @@ window.fetch = async function(...args) {
 };
 
 /* ------------------------------------------------------------------
- * Reply sentiment classification
+ * Reply classification
  *
- * A reply is treated as NEGATIVE only when it is a rejection or an
- * opt-out. Everything else — a question, a "maybe", a callback time,
- * even a single "?" — counts as POSITIVE, because it means the lead
- * is still talking to us.
- *
- * Edit these two lists to tune what lands in the Negative tab.
+ * The keyword lists live in ONE place: public/lib/classification.js,
+ * loaded as a plain script before this file and shared verbatim with
+ * the server. Never re-implement them here.
  * ------------------------------------------------------------------ */
+const Classify = window.SmsClassification;
+const CLS = Classify.CLASSIFICATIONS;
 
-// Whole-reply matches: the reply is negative only if it says nothing else.
-const NEGATIVE_EXACT = [
-  'no', 'nope', 'nah', 'na', 'no thanks', 'no thank you', 'no thx', 'nope thanks',
-  'not interested', 'im not interested', 'i am not interested', 'no interest',
-  'stop', 'stopall', 'stop all', 'end', 'quit', 'cancel', 'unsubscribe',
-  'unsub', 'optout', 'opt out', 'revoke', 'remove', 'remove me', 'delete me',
-  'take me off', 'go away', 'leave me alone', 'fuck off', 'fuck you', 'f off',
-  'piss off', 'never', 'no way', 'pass', 'hard pass', 'wrong number'
-];
-
-// Substring matches: negative no matter what else the reply contains.
-const NEGATIVE_PHRASES = [
-  'remove me from your list', 'remove me from the list', 'remove my number',
-  'take me off your list', 'take me off the list', 'take me off your',
-  'off your list', 'off of your list', 'delete my number',
-  'stop texting', 'stop messaging', 'stop contacting', 'stop calling',
-  'do not text', "don't text", 'do not contact', "don't contact",
-  'do not call', "don't call", 'not interested', 'no longer interested',
-  'unsubscribe', 'opt me out', 'fuck off', 'fuck you', 'leave me alone',
-  'quit texting', 'quit messaging', 'lose my number'
-];
-
-// Normalize a reply for matching: lowercase, strip punctuation/emoji, collapse spaces.
-function normalizeReply(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Returns 'negative' or 'positive' for a given inbound reply body.
-function classifyReply(text) {
-  const normalized = normalizeReply(text);
-  if (!normalized) return 'positive';
-
-  if (NEGATIVE_EXACT.includes(normalized)) return 'negative';
-  if (NEGATIVE_PHRASES.some(phrase => normalized.includes(phrase))) return 'negative';
-
-  // Short replies that start with a rejection word ("no thanks man", "stop please")
-  const words = normalized.split(' ');
-  if (words.length <= 4 && NEGATIVE_EXACT.includes(words[0])) return 'negative';
-
-  return 'positive';
+/**
+ * The classification of a conversation's latest reply.
+ * Prefers reply_classification computed and stored by the server; falls
+ * back to classifying locally only for records written before that column
+ * existed.
+ */
+function replyClassificationOf(conv) {
+  if (conv.reply_classification) return conv.reply_classification;
+  if (conv.last_inbound_text) return Classify.classifyReply(conv.last_inbound_text);
+  return null;
 }
 
 /* ------------------------------------------------------------------
@@ -79,14 +44,19 @@ function classifyReply(text) {
  *
  * A conversation lands in exactly one "view". Views are grouped into
  * the folders shown in the sidebar; a folder's count is the sum of
- * its views. A manual disposition always wins over the automatic
- * positive/negative read of the reply.
+ * its views.
+ *
+ * Reply classification and business disposition are SEPARATE concepts
+ * and both are preserved. Placement precedence:
+ *   1. Hard suppression (opted out / wrong number) — legal state wins.
+ *   2. Manual disposition — the human's business decision.
+ *   3. Reply classification — the automatic read.
  * ------------------------------------------------------------------ */
 const FOLDERS = {
   'new':        { views: ['new'] },
   'hot':        { views: ['appointment', 'follow_up'] },
   'customer':   { views: ['customer'] },
-  'closed':     { views: ['no', 'unqualified'] },
+  'closed':     { views: ['no', 'unqualified', 'opted_out', 'wrong_number'] },
   'pending':    { views: ['pending'] },
   'storm-demo': { views: ['storm-demo'] }
 };
@@ -104,26 +74,46 @@ const DISPOSITION_LABELS = {
   customer: 'Customer'
 };
 
-// Which view a conversation belongs to
+// Which view a conversation belongs to. Every conversation resolves to
+// exactly one, so nothing can fall into an unreachable state.
 function getConversationBucket(conv) {
   if (conv.isLead) return 'storm-demo';
 
-  // A manual disposition overrides everything else
+  // 1. Legal suppression always wins, and is shown distinctly from a
+  //    business "No" so opt-outs are never buried among ordinary rejections.
+  if (conv.opted_out) return 'opted_out';
+  if (conv.wrong_number) return 'wrong_number';
+
+  // 2. The human's decision.
   if (conv.disposition && DISPOSITION_LABELS[conv.disposition]) {
     return conv.disposition;
   }
 
+  // 3. The automatic read of their reply.
   const hasResponded = conv.stage && conv.stage.endsWith('-Responded');
   if (!hasResponded) return 'pending';
 
-  // Auto-detected opt-outs go straight to Closed > No without needing a click
-  if (classifyReply(conv.last_inbound_text) === 'negative') return 'no';
+  const cls = replyClassificationOf(conv);
+  if (cls === CLS.NEGATIVE) return 'no';
 
   return 'new';
 }
 
 function getFolderForView(view) {
   return Object.keys(FOLDERS).find(f => FOLDERS[f].views.includes(view)) || 'new';
+}
+
+/** True when the contact may not be messaged at all. */
+function isHardSuppressed(conv) {
+  return Boolean(conv && (conv.opted_out || conv.wrong_number));
+}
+
+/** Short human label for a conversation's suppression state, or null. */
+function suppressionLabelOf(conv) {
+  if (!conv) return null;
+  if (conv.opted_out) return 'Opted Out';
+  if (conv.wrong_number) return 'Wrong Number';
+  return null;
 }
 
 // Application State
@@ -261,6 +251,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setupWebSockets();
   updateStormLeadsBadge();
   setupStatsPanel();
+  setupReminders();
   
   // Set webhook URL based on current host
   const host = window.location.host;
@@ -772,8 +763,9 @@ window.addEventListener('DOMContentLoaded', () => {
     btnSaveSchedule.disabled = true;
     btnSaveSchedule.textContent = 'Saving...';
 
-    // datetime-local gives "YYYY-MM-DDTHH:mm"; store it the way SQLite datetimes look
-    const scheduledAt = scheduleDatetime.value.replace('T', ' ') + ':00';
+    // datetime-local is a LOCAL wall-clock value. Convert it to a real instant
+    // so the server stores the correct UTC moment regardless of the user's zone.
+    const scheduledAt = new Date(scheduleDatetime.value).toISOString();
     const saved = await applyDisposition(pendingDisposition, scheduledAt, scheduleNote.value.trim() || null);
 
     btnSaveSchedule.disabled = false;
@@ -784,6 +776,44 @@ window.addEventListener('DOMContentLoaded', () => {
       pendingDisposition = null;
     }
   });
+
+  // Explicit re-opt-in. Requires a typed confirmation so it can never be a
+  // stray click, and it is the ONLY way to lift an opt-out.
+  const btnOptIn = document.getElementById('btn-opt-in');
+  if (btnOptIn) {
+    btnOptIn.addEventListener('click', async () => {
+      if (!activeConversation || activeConversation.isLead) return;
+      const name = activeConversation.name || activeConversation.phone_number;
+      const confirmed = confirm(
+        'Re-enable messaging for ' + name + '?\n\n' +
+        'Only do this if the contact has asked to hear from you again. ' +
+        'The re-opt-in is recorded against your username.'
+      );
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch('/api/conversations/' + activeConversation.id + '/opt-in', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert('Could not re-enable messaging: ' + (err.error || res.statusText));
+          return;
+        }
+        const updated = await res.json();
+        Object.assign(activeConversation, updated);
+        updateSuppressionNotice(activeConversation);
+        updateSentimentBadge(activeConversation);
+        chatComposerContainer.style.display = 'block';
+        await loadConversations();
+      } catch (err) {
+        console.error('Re-opt-in failed:', err);
+        alert('Connection error.');
+      }
+    });
+  }
 
   // Logout handler
   const btnLogout = document.getElementById('btn-logout');
@@ -818,6 +848,7 @@ async function loadConversations() {
         Object.assign(activeConversation, fresh);
         updateSentimentBadge(fresh);
         updateDispositionBar(fresh);
+        updateSuppressionNotice(fresh);
       }
     }
   } catch (err) {
@@ -997,6 +1028,8 @@ function handleIncomingDisposition(data) {
   if (activeConversation && activeConversation.id === data.id) {
     Object.assign(activeConversation, data);
     updateDispositionBar(activeConversation);
+    updateSentimentBadge(activeConversation);
+    updateSuppressionNotice(activeConversation);
   }
   renderConversations();
 }
@@ -1175,11 +1208,11 @@ function getFilteredConversations() {
 
   // Appointments and follow-ups read as a schedule: soonest first
   if (SCHEDULED_VIEWS.includes(currentView)) {
-    list.sort((a, b) => {
-      const aTime = a.scheduled_at ? new Date(a.scheduled_at.replace(' ', 'T')).getTime() : Infinity;
-      const bTime = b.scheduled_at ? new Date(b.scheduled_at.replace(' ', 'T')).getTime() : Infinity;
-      return aTime - bTime;
-    });
+    const at = c => {
+      const d = c.scheduled_at ? parseUtc(c.scheduled_at) : null;
+      return d ? d.getTime() : Infinity;
+    };
+    list.sort((a, b) => at(a) - at(b));
   }
 
   return list;
@@ -1262,11 +1295,19 @@ function getEmptyStateHtml() {
     },
     'no': {
       title: 'No rejections',
-      body: 'Opt-outs like “No thanks” or “STOP” land here automatically.'
+      body: 'Leads who said no thanks. Legal opt-outs are kept separately under Opted Out.'
     },
     unqualified: {
       title: 'Nothing unqualified',
       body: 'Leads you mark as not a fit show up here.'
+    },
+    opted_out: {
+      title: 'No opt-outs',
+      body: 'Contacts who sent STOP or another legal opt-out. They can never be messaged again unless you explicitly re-enable them.'
+    },
+    wrong_number: {
+      title: 'No wrong numbers',
+      body: 'Numbers that reached the wrong person are parked here and excluded from every send.'
     },
     pending: {
       title: 'Nothing pending',
@@ -1341,8 +1382,8 @@ function renderConversations() {
     let overdueClass = '';
 
     if (isScheduled) {
-      const due = new Date(c.scheduled_at.replace(' ', 'T'));
-      const isOverdue = due.getTime() < Date.now();
+      const due = parseUtc(c.scheduled_at);
+      const isOverdue = due && due.getTime() < Date.now();
       overdueClass = isOverdue ? ' is-overdue' : '';
       preview = `${isOverdue ? 'Overdue · ' : ''}${formatScheduleTimestamp(due)}`;
       previewIcon = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="conv-schedule-icon"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
@@ -1409,8 +1450,10 @@ function filterConversations() {
 // "Aug 5, 2:00 PM" — used for appointment/follow-up times
 function formatScheduleTimestamp(dateInput) {
   if (!dateInput) return '';
-  const date = dateInput instanceof Date ? dateInput : new Date(String(dateInput).replace(' ', 'T'));
-  if (isNaN(date.getTime())) return '';
+  // Server timestamps are UTC; parseUtc converts, then toLocaleString renders
+  // in the viewer's own timezone.
+  const date = dateInput instanceof Date ? dateInput : parseUtc(dateInput);
+  if (!date || isNaN(date.getTime())) return '';
   return date.toLocaleString([], {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
@@ -1473,6 +1516,7 @@ async function applyDisposition(disposition, scheduledAt = null, note = null) {
     Object.assign(activeConversation, updated);
     updateDispositionBar(activeConversation);
     updateSentimentBadge(activeConversation);
+    updateSuppressionNotice(activeConversation);
     await loadConversations();
     return true;
   } catch (err) {
@@ -1499,7 +1543,7 @@ function openScheduleModal(disposition) {
 
   // Reuse the existing time when re-scheduling, otherwise pick a sensible default
   if (activeConversation.disposition === disposition && activeConversation.scheduled_at) {
-    input.value = toLocalInputValue(new Date(activeConversation.scheduled_at.replace(' ', 'T')));
+    input.value = toLocalInputValue(parseUtc(activeConversation.scheduled_at));
   } else {
     const preset = new Date();
     preset.setDate(preset.getDate() + (disposition === 'appointment' ? 1 : 3));
@@ -1540,20 +1584,70 @@ function updateSentimentBadge(conv) {
     return;
   }
 
-  // Independent of the disposition: this describes the contact's last reply
-  const hasResponded = conv.stage && conv.stage.endsWith('-Responded');
-  let tone = 'pending';
-  if (hasResponded) {
-    tone = classifyReply(conv.last_inbound_text) === 'negative' ? 'negative' : 'positive';
+  // Describes the contact's REPLY, independent of any business disposition.
+  // A plain "No thanks" must never be labelled "Opted out".
+  let tone;
+  let label;
+
+  if (conv.opted_out) {
+    tone = 'opted-out';
+    label = 'Opted Out';
+  } else if (conv.wrong_number) {
+    tone = 'wrong-number';
+    label = 'Wrong Number';
+  } else {
+    const hasResponded = conv.stage && conv.stage.endsWith('-Responded');
+    if (!hasResponded) {
+      tone = 'pending';
+      label = 'Awaiting Reply';
+    } else {
+      const cls = replyClassificationOf(conv) || CLS.POSITIVE;
+      tone = {
+        [CLS.POSITIVE]: 'positive',
+        [CLS.NEGATIVE]: 'negative',
+        [CLS.OPT_OUT]: 'opted-out',
+        [CLS.WRONG_NUMBER]: 'wrong-number',
+        [CLS.UNKNOWN]: 'unknown'
+      }[cls];
+      label = Classify.labelFor(cls);
+    }
   }
 
-  badge.textContent = {
-    positive: 'Positive reply',
-    negative: 'Opted out',
-    pending: 'Awaiting reply'
-  }[tone];
+  badge.textContent = label;
   badge.className = `sentiment-badge ${tone}`;
   badge.style.display = 'inline-flex';
+}
+
+/**
+ * Swaps the composer for a suppression notice. Individual sends to a
+ * hard-suppressed contact are refused by the server too — this stops the
+ * user wasting a click, it is not the enforcement.
+ */
+function updateSuppressionNotice(conv) {
+  const notice = document.getElementById('suppressed-notice');
+  const composer = document.getElementById('chat-composer-container');
+  if (!notice) return;
+
+  if (!conv || conv.isLead || !isHardSuppressed(conv)) {
+    notice.style.display = 'none';
+    return;
+  }
+
+  const title = document.getElementById('suppressed-title');
+  const detail = document.getElementById('suppressed-detail');
+
+  if (conv.opted_out) {
+    title.textContent = 'This contact opted out';
+    const when = conv.opted_out_at ? formatScheduleTimestamp(conv.opted_out_at) : 'an earlier message';
+    const quote = conv.opt_out_text ? ` They said: “${conv.opt_out_text}”.` : '';
+    detail.textContent = `Recorded ${when} via ${conv.opt_out_source || 'an inbound reply'}.${quote} Messaging is blocked.`;
+  } else {
+    title.textContent = 'Wrong number';
+    detail.textContent = 'This number reached the wrong person, so messaging is blocked.';
+  }
+
+  notice.style.display = 'flex';
+  if (composer) composer.style.display = 'none';
 }
 
 // 6. Select active chat
@@ -1561,6 +1655,7 @@ async function selectConversation(conv) {
   activeConversation = conv;
   updateSentimentBadge(conv);
   updateDispositionBar(conv);
+  updateSuppressionNotice(conv);
 
   if (conv && conv.isLead) {
     // UI Selection styling
@@ -1661,8 +1756,9 @@ async function selectConversation(conv) {
   activeContactName.textContent = conv.name || conv.phone_number;
   activeContactPhone.textContent = conv.name ? conv.phone_number : 'SMS Contact';
   
-  // Show input field and delete button
-  chatComposerContainer.style.display = 'block';
+  // Show the composer only when the contact may actually be messaged.
+  // updateSuppressionNotice hides it, and this used to override that.
+  chatComposerContainer.style.display = isHardSuppressed(conv) ? 'none' : 'block';
   btnDeleteChat.style.display = 'block';
   updateCharCounter(messageInput, chatCharCounter);
   
@@ -1831,6 +1927,17 @@ async function handleSendMessage(e) {
           }
         }, 300);
       }
+    } else if (res.status === 409) {
+      const err = await res.json();
+      alert(err.error || 'This contact is suppressed and cannot be messaged.');
+      // Re-sync so the composer is replaced by the suppression notice.
+      await loadConversations();
+      const fresh = conversations.find(c => c.id === convId);
+      if (fresh) {
+        Object.assign(activeConversation, fresh);
+        updateSuppressionNotice(fresh);
+        updateSentimentBadge(fresh);
+      }
     } else {
       const err = await res.json();
       alert("Error queueing message: " + err.error);
@@ -1872,6 +1979,7 @@ function resetChatToWelcomeBox() {
   activeConversation = null;
   updateSentimentBadge(null);
   updateDispositionBar(null);
+  updateSuppressionNotice(null);
 
   // Reset active conversation sidebar selection styling
   document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
@@ -1976,6 +2084,226 @@ async function handleSaveSettings(e) {
     settingsStatus.textContent = 'Connection error saving settings';
     settingsStatus.className = 'settings-status error';
   }
+}
+
+/* ==================================================================
+ * Appointment and follow-up reminders
+ *
+ * Times arrive from the server as UTC 'YYYY-MM-DD HH:MM:SS'. They are
+ * parsed as UTC and rendered in the viewer's local timezone.
+ *
+ * Reminder state is persisted server-side (reminder_state table) so a
+ * reminder fires once per tier and survives refreshes and restarts.
+ * No external SMS or email reminders are sent — this is in-app plus
+ * optional browser notifications only.
+ * ================================================================== */
+
+// Tiers, most urgent first. A scheduled item fires at most once per tier.
+const REMINDER_TIERS = [
+  { id: 'overdue',  label: 'Overdue',  test: mins => mins < 0 },
+  { id: 'due_now',  label: 'Due now',  test: mins => mins >= 0 && mins <= 5 },
+  { id: 'due_15',   label: 'In 15 minutes', test: mins => mins > 5 && mins <= 15 },
+  { id: 'due_60',   label: 'In 1 hour', test: mins => mins > 15 && mins <= 60 }
+];
+
+const REMINDER_POLL_MS = 60000;
+let reminderTimer = null;
+
+/** Parse a server UTC timestamp into a Date. */
+function parseUtc(stamp) {
+  if (!stamp) return null;
+  const normalized = String(stamp).replace(' ', 'T');
+  const date = new Date(/[Zz]|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+/** Minutes until a scheduled time. Negative means overdue. */
+function minutesUntil(stamp) {
+  const date = parseUtc(stamp);
+  if (!date) return null;
+  return (date.getTime() - Date.now()) / 60000;
+}
+
+function reminderTierFor(stamp) {
+  const mins = minutesUntil(stamp);
+  if (mins === null) return null;
+  return REMINDER_TIERS.find(t => t.test(mins)) || null;
+}
+
+/** Scheduled conversations that need attention now, soonest first. */
+function getDueReminders() {
+  return conversations
+    .filter(c => SCHEDULED_VIEWS.includes(c.disposition) && c.scheduled_at && !isHardSuppressed(c))
+    .map(c => ({ conv: c, tier: reminderTierFor(c.scheduled_at), mins: minutesUntil(c.scheduled_at) }))
+    .filter(r => r.tier)
+    .sort((a, b) => a.mins - b.mins);
+}
+
+/** Counts shown on the Hot Leads folder. */
+function getReminderCounts() {
+  let overdue = 0;
+  let dueSoon = 0;
+  getDueReminders().forEach(r => {
+    if (r.tier.id === 'overdue') overdue++;
+    else dueSoon++;
+  });
+  return { overdue, dueSoon };
+}
+
+function updateHotLeadsIndicator() {
+  const tab = document.querySelector('.folder-tab[data-folder="hot"]');
+  if (!tab) return;
+  const { overdue, dueSoon } = getReminderCounts();
+
+  tab.classList.toggle('has-overdue', overdue > 0);
+  tab.classList.toggle('has-due-soon', overdue === 0 && dueSoon > 0);
+
+  let pip = tab.querySelector('.tab-alert');
+  if (overdue + dueSoon > 0) {
+    if (!pip) {
+      pip = document.createElement('span');
+      pip.className = 'tab-alert';
+      tab.appendChild(pip);
+    }
+    pip.textContent = overdue > 0 ? String(overdue) : String(dueSoon);
+    pip.title = overdue > 0
+      ? `${overdue} overdue`
+      : `${dueSoon} due soon`;
+  } else if (pip) {
+    pip.remove();
+  }
+}
+
+/** Ask the server which reminders have already been delivered. */
+async function fetchNotifiedReminders() {
+  try {
+    const res = await fetch('/api/reminders');
+    if (!res.ok) return { due: [], notified: [] };
+    return await res.json();
+  } catch (err) {
+    console.error('Reminder fetch failed:', err);
+    return { due: [], notified: [] };
+  }
+}
+
+/** Mark a reminder tier as delivered so it never fires twice. */
+async function acknowledgeReminder(conversationId, scheduledAt, tier) {
+  try {
+    await fetch('/api/reminders/ack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conversationId, scheduled_at: scheduledAt, tier })
+    });
+  } catch (err) {
+    console.error('Reminder ack failed:', err);
+  }
+}
+
+function reminderKey(conversationId, scheduledAt, tier) {
+  return `${conversationId}|${scheduledAt}|${tier}`;
+}
+
+/** The in-app reminder banner. Not dependent on notification permission. */
+function renderReminderBanner(due) {
+  const banner = document.getElementById('reminder-banner');
+  const list = document.getElementById('reminder-list');
+  const count = document.getElementById('reminder-count');
+  if (!banner || !list) return;
+
+  if (!due.length) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  banner.style.display = 'flex';
+  count.textContent = String(due.length);
+  list.innerHTML = due.slice(0, 6).map(r => {
+    const name = r.conv.name || r.conv.phone_number;
+    const when = formatScheduleTimestamp(r.conv.scheduled_at);
+    const kind = r.conv.disposition === 'appointment' ? 'Appointment' : 'Follow-up';
+    return `
+      <button type="button" class="reminder-item tier-${r.tier.id}" data-conversation-id="${escapeHTML(r.conv.id)}">
+        <span class="reminder-tier">${escapeHTML(r.tier.label)}</span>
+        <span class="reminder-name">${escapeHTML(name)}</span>
+        <span class="reminder-meta">${escapeHTML(kind)} &middot; ${escapeHTML(when)}</span>
+      </button>`;
+  }).join('');
+
+  list.querySelectorAll('.reminder-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const conv = conversations.find(c => String(c.id) === item.dataset.conversationId);
+      if (conv) {
+        setActiveFolder(getFolderForView(getConversationBucket(conv)),
+                        getConversationBucket(conv));
+        selectConversation(conv);
+      }
+    });
+  });
+}
+
+/** Browser notification, only with permission and only once per tier. */
+function sendBrowserNotification(reminder) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const name = reminder.conv.name || reminder.conv.phone_number;
+  const kind = reminder.conv.disposition === 'appointment' ? 'Appointment' : 'Follow-up';
+  try {
+    new Notification(`${reminder.tier.label}: ${kind}`, {
+      body: `${name} — ${formatScheduleTimestamp(reminder.conv.scheduled_at)}`,
+      tag: reminderKey(reminder.conv.id, reminder.conv.scheduled_at, reminder.tier.id)
+    });
+  } catch (err) {
+    console.error('Notification failed:', err);
+  }
+}
+
+let notifiedKeys = new Set();
+
+async function checkReminders() {
+  const due = getDueReminders();
+  renderReminderBanner(due);
+  updateHotLeadsIndicator();
+
+  for (const reminder of due) {
+    const key = reminderKey(reminder.conv.id, reminder.conv.scheduled_at, reminder.tier.id);
+    if (notifiedKeys.has(key)) continue;
+    notifiedKeys.add(key);
+    sendBrowserNotification(reminder);
+    await acknowledgeReminder(reminder.conv.id, reminder.conv.scheduled_at, reminder.tier.id);
+  }
+}
+
+async function setupReminders() {
+  // Seed from the server so a refresh does not replay old reminders.
+  const state = await fetchNotifiedReminders();
+  notifiedKeys = new Set((state.notified || []).map(r =>
+    reminderKey(r.conversation_id, r.scheduled_at, r.tier)));
+
+  const dismiss = document.getElementById('reminder-dismiss');
+  if (dismiss) {
+    dismiss.addEventListener('click', () => {
+      const banner = document.getElementById('reminder-banner');
+      if (banner) banner.style.display = 'none';
+    });
+  }
+
+  const enable = document.getElementById('reminder-enable-notifications');
+  if (enable) {
+    const sync = () => {
+      const supported = 'Notification' in window;
+      enable.style.display = supported && Notification.permission === 'default' ? 'inline-flex' : 'none';
+    };
+    enable.addEventListener('click', async () => {
+      if ('Notification' in window) {
+        await Notification.requestPermission();
+        sync();
+      }
+    });
+    sync();
+  }
+
+  checkReminders();
+  if (reminderTimer) clearInterval(reminderTimer);
+  reminderTimer = setInterval(checkReminders, REMINDER_POLL_MS);
 }
 
 /* ==================================================================
@@ -2160,7 +2488,7 @@ function renderStatsChart(daily, from, to) {
   const tipFor = (b) => {
     const prefix = unit === 'week' ? 'Week of ' : '';
     const replies = `${b.replies.toLocaleString()} ${b.replies === 1 ? 'reply' : 'replies'}`;
-    return `${prefix}${labelFor(b.label)} — ${b.sent.toLocaleString()} delivered, ${replies}`;
+    return `${prefix}${labelFor(b.label)} — ${b.sent.toLocaleString()} accepted, ${replies}`;
   };
 
   // Keep axis labels from colliding: roughly one per 46px
@@ -2191,7 +2519,7 @@ function renderStatsChart(daily, from, to) {
   });
 
   container.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="stats-chart-svg" role="img" aria-label="Messages delivered and replies received over time">
+    <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="stats-chart-svg" role="img" aria-label="Messages accepted by the carrier and replies received over time">
       ${grid}${bars}${labels}
     </svg>`;
 }
@@ -2209,10 +2537,10 @@ function renderFunnel(stats) {
   if (!container) return;
 
   const steps = [
-    { label: 'Delivered', value: stats.sent.delivered, cls: 'step-delivered' },
-    { label: 'Contacts Reached', value: stats.sent.contacts_reached, cls: 'step-contacts' },
+    { label: 'Carrier accepted', value: stats.sent.carrier_accepted, cls: 'step-delivered' },
+    { label: 'Contacts reached', value: stats.sent.contacts_accepted, cls: 'step-contacts' },
     { label: 'Replied', value: stats.responses.unique_responders, cls: 'step-replied' },
-    { label: 'Positive', value: stats.responses.positive_responders, cls: 'step-positive' },
+    { label: 'Positive', value: stats.responses.positive_contacts, cls: 'step-positive' },
     { label: 'Appointments', value: stats.dispositions.appointment, cls: 'step-appointment' },
     { label: 'Customers', value: stats.dispositions.customer, cls: 'step-customer' }
   ];
@@ -2220,14 +2548,15 @@ function renderFunnel(stats) {
   const top = Math.max(1, steps[0].value);
 
   container.innerHTML = steps.map((step, i) => {
-    const width = Math.max(2, (step.value / top) * 100);
-    const previous = i === 0 ? null : steps[i - 1].value;
-    const conversion = previous > 0 ? `${Math.round((step.value / previous) * 1000) / 10}%` : (i === 0 ? '' : '—');
+    const value = step.value || 0;
+    const width = Math.max(2, (value / top) * 100);
+    const previous = i === 0 ? null : (steps[i - 1].value || 0);
+    const conversion = previous > 0 ? `${Math.round((value / previous) * 1000) / 10}%` : (i === 0 ? '' : '\u2014');
     return `
       <div class="funnel-step">
         <div class="funnel-step-head">
-          <span class="funnel-label">${step.label}</span>
-          <span class="funnel-value">${step.value.toLocaleString()}${conversion ? `<span class="funnel-conv">${conversion}</span>` : ''}</span>
+          <span class="funnel-label">${escapeHTML(step.label)}</span>
+          <span class="funnel-value">${value.toLocaleString()}${conversion ? `<span class="funnel-conv">${conversion}</span>` : ''}</span>
         </div>
         <div class="funnel-track"><div class="funnel-fill ${step.cls}" style="width: ${width}%"></div></div>
       </div>`;
@@ -2262,36 +2591,59 @@ function renderDispositionBreakdown(dispositions) {
 
 function renderStats(stats) {
   const num = n => (n || 0).toLocaleString();
-  const set = (id, value) => {
+  const set = (id, value, title) => {
     const el = document.getElementById(id);
-    if (el) el.textContent = value;
+    if (!el) return;
+    el.textContent = value;
+    if (title) el.title = title;
   };
+
+  const defs = stats.rate_definitions || {};
 
   set('stats-range-label', formatRangeLabel(stats.from, stats.to));
 
-  // Headline KPIs
+  // Attempted: every outbound row created in the window.
   set('kpi-sent', num(stats.sent.attempted));
-  set('kpi-sent-sub', `${num(stats.sent.delivered)} delivered · ${num(stats.sent.failed)} failed`);
+  set('kpi-sent-sub',
+      `${num(stats.sent.carrier_accepted)} accepted by carrier \u00b7 ${num(stats.sent.failed)} failed`,
+      'Outbound messages created in this period, whatever their outcome');
+
+  // Carrier acceptance is NOT delivery. Both are shown, labelled honestly.
+  set('kpi-accepted', num(stats.sent.carrier_accepted));
+  set('kpi-accepted-sub', `${stats.sent.acceptance_rate}% acceptance rate`, defs.acceptance_rate);
 
   set('kpi-delivered', num(stats.sent.delivered));
-  set('kpi-delivered-sub', `${stats.sent.delivery_rate}% delivery rate`);
+  set('kpi-delivered-sub',
+      stats.sent.delivered > 0
+        ? `${stats.sent.confirmed_delivery_rate}% confirmed \u00b7 ${num(stats.sent.unknown_delivery)} unconfirmed`
+        : `No delivery receipts \u00b7 ${num(stats.sent.unknown_delivery)} unconfirmed`,
+      defs.confirmed_delivery_rate);
 
-  set('kpi-responses', num(stats.responses.total));
-  set('kpi-responses-sub', `${num(stats.responses.unique_responders)} contacts · ${stats.responses.response_rate}% reply rate`);
+  set('kpi-responses', num(stats.responses.total_messages));
+  set('kpi-responses-sub',
+      `${num(stats.responses.unique_responders)} unique contacts \u00b7 ${stats.responses.response_rate}% reply rate`,
+      defs.response_rate);
 
-  set('kpi-positive', num(stats.responses.positive));
-  set('kpi-positive-rate', `${stats.responses.positive_rate_of_replies}%`);
-  set('kpi-positive-sub', `${stats.responses.positive_rate_of_replies}% of replies · ${stats.responses.positive_rate_of_sent}% of contacts reached`);
+  // Contact-level, so one chatty lead cannot inflate the figure.
+  set('kpi-positive', num(stats.responses.positive_contacts));
+  set('kpi-positive-rate', `${stats.responses.positive_rate_of_responders}%`, defs.positive_rate_of_responders);
+  set('kpi-positive-sub',
+      `${stats.responses.positive_rate_of_responders}% of responders \u00b7 ${stats.responses.positive_rate_of_contacted}% of contacts reached \u00b7 ${num(stats.responses.positive_messages)} messages`,
+      defs.positive_rate_of_contacted);
 
-  set('kpi-negative', num(stats.responses.negative));
-  set('kpi-negative-rate', `${stats.responses.negative_rate_of_replies}%`);
-  set('kpi-negative-sub', `${stats.responses.negative_rate_of_replies}% of replies`);
+  set('kpi-negative', num(stats.responses.negative_contacts));
+  set('kpi-negative-rate', `${stats.responses.negative_rate_of_responders}%`, defs.negative_rate_of_responders);
+  set('kpi-negative-sub',
+      `${num(stats.responses.opt_out_contacts)} opted out \u00b7 ${num(stats.responses.wrong_number_contacts)} wrong number`,
+      'Not interested, counted per contact. Legal opt-outs are counted separately.');
 
   // Secondary metrics
   set('ms-contacts', num(stats.sent.contacts_reached));
   set('ms-new-leads', num(stats.new_leads));
   set('ms-failed', num(stats.sent.failed));
-  set('ms-inflight', num(stats.sent.in_flight));
+  set('ms-inflight', num(stats.sent.queued));
+  set('ms-optouts', num(stats.suppression.opt_outs_recorded),
+      'Contacts permanently suppressed during this period');
   set('ms-reply-time', formatDuration(stats.avg_reply_minutes));
   set('ms-peak-hour', formatHour(stats.peak_reply_hour));
 
@@ -2768,14 +3120,16 @@ function renderTimelineItem(msg) {
   const statusClass = msg.direction === 'inbound' ? 'received' : msg.status;
   const statusLabel = msg.direction === 'inbound' ? 'received' : msg.status;
 
+  // Every interpolated value here is attacker-controlled: bodyText and
+  // nameOrPhone come straight from an inbound SMS. Escape all of them.
   return `
-    <div class="timeline-item ${statusClass}" data-activity-id="${msg.id}">
+    <div class="timeline-item ${escapeHTML(statusClass)}" data-activity-id="${escapeHTML(msg.id)}">
       <div class="timeline-badge"></div>
       <div class="timeline-header">
-        <span class="timeline-title">${title}</span>
-        <span class="timeline-time">${timeAgoStr}</span>
+        <span class="timeline-title">${escapeHTML(title)}</span>
+        <span class="timeline-time">${escapeHTML(timeAgoStr)}</span>
       </div>
-      <div class="timeline-body" title="${bodyText} (${statusLabel})">${bodyText}</div>
+      <div class="timeline-body" title="${escapeHTML(`${bodyText} (${statusLabel})`)}">${escapeHTML(bodyText)}</div>
     </div>
   `;
 }

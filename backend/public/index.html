@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=rotation-3">
+  <link rel="stylesheet" href="style.css?v=suppression-1">
 </head>
 <body>
   <div class="app-container">
@@ -107,6 +107,16 @@
             <span>Unqualified</span>
             <span class="subtab-count" id="count-unqualified">0</span>
           </button>
+          <button type="button" class="subtab subtab-suppressed" data-parent="closed" data-view="opted_out" title="Contacts who sent STOP or another legal opt-out">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="4.9" y1="4.9" x2="19.1" y2="19.1"></line></svg>
+            <span>Opted Out</span>
+            <span class="subtab-count" id="count-opted_out">0</span>
+          </button>
+          <button type="button" class="subtab subtab-suppressed" data-parent="closed" data-view="wrong_number" title="Numbers that reached the wrong person">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path><line x1="2" y1="2" x2="22" y2="22"></line></svg>
+            <span>Wrong #</span>
+            <span class="subtab-count" id="count-wrong_number">0</span>
+          </button>
         </div>
       </nav>
 
@@ -164,6 +174,18 @@
       </div>
     </aside>
     
+    <!-- Reminder banner: works without browser notification permission -->
+    <div class="reminder-banner" id="reminder-banner" style="display: none;">
+      <div class="reminder-banner-head">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+        <strong>Due now</strong>
+        <span class="reminder-count" id="reminder-count">0</span>
+        <button type="button" class="btn-enable-notifications" id="reminder-enable-notifications" style="display: none;">Enable desktop alerts</button>
+        <button type="button" class="reminder-dismiss" id="reminder-dismiss" title="Hide until the next check">&times;</button>
+      </div>
+      <div class="reminder-list" id="reminder-list"></div>
+    </div>
+
     <!-- Main Content: Active Chat -->
     <main class="chat-area">
       <header class="chat-header" id="chat-header">
@@ -228,6 +250,16 @@
         </div>
       </section>
       
+      <!-- Shown instead of the composer when the contact must not be messaged -->
+      <div class="suppressed-notice" id="suppressed-notice" style="display: none;">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.9" y1="4.9" x2="19.1" y2="19.1"></line></svg>
+        <div class="suppressed-text">
+          <strong id="suppressed-title">This contact is suppressed</strong>
+          <p id="suppressed-detail">Messaging is disabled.</p>
+        </div>
+        <button type="button" class="btn-opt-in" id="btn-opt-in">Re-enable messaging…</button>
+      </div>
+
       <footer class="chat-composer-container" id="chat-composer-container" style="display: none;">
         <form id="chat-form" class="chat-composer">
           <div class="composer-inputs">
@@ -500,12 +532,17 @@
           <!-- Headline KPIs -->
           <div class="kpi-grid">
             <div class="kpi-card kpi-sent">
-              <div class="kpi-label">Texts Sent</div>
+              <div class="kpi-label" title="Outbound messages created in this period, whatever their outcome.">Attempted</div>
               <div class="kpi-value" id="kpi-sent">0</div>
               <div class="kpi-sub" id="kpi-sent-sub">&nbsp;</div>
             </div>
+            <div class="kpi-card kpi-accepted">
+              <div class="kpi-label" title="The carrier accepted the message for delivery. This is NOT proof it reached a handset.">Carrier Accepted</div>
+              <div class="kpi-value" id="kpi-accepted">0</div>
+              <div class="kpi-sub" id="kpi-accepted-sub">&nbsp;</div>
+            </div>
             <div class="kpi-card kpi-delivered">
-              <div class="kpi-label">Delivered</div>
+              <div class="kpi-label" title="Confirmed by a carrier delivery receipt. Only DLR-capable routes report this.">Delivered</div>
               <div class="kpi-value" id="kpi-delivered">0</div>
               <div class="kpi-sub" id="kpi-delivered-sub">&nbsp;</div>
             </div>
@@ -538,6 +575,7 @@
             <div class="ministat"><span class="ministat-label">New Leads Added</span><span class="ministat-value" id="ms-new-leads">0</span></div>
             <div class="ministat"><span class="ministat-label">Failed Sends</span><span class="ministat-value" id="ms-failed">0</span></div>
             <div class="ministat"><span class="ministat-label">Still In Queue</span><span class="ministat-value" id="ms-inflight">0</span></div>
+            <div class="ministat"><span class="ministat-label">Opt-Outs Recorded</span><span class="ministat-value" id="ms-optouts">0</span></div>
             <div class="ministat"><span class="ministat-label">Avg Time To Reply</span><span class="ministat-value" id="ms-reply-time">—</span></div>
             <div class="ministat"><span class="ministat-label">Peak Reply Hour</span><span class="ministat-value" id="ms-peak-hour">—</span></div>
           </div>
@@ -548,7 +586,7 @@
               <div class="stats-card-header">
                 <h3>Activity Over Time</h3>
                 <div class="chart-legend">
-                  <span class="legend-item"><span class="legend-swatch swatch-sent"></span>Delivered</span>
+                  <span class="legend-item" title="Messages the carrier accepted"><span class="legend-swatch swatch-sent"></span>Accepted</span>
                   <span class="legend-item"><span class="legend-swatch swatch-replies"></span>Replies</span>
                 </div>
               </div>
@@ -737,6 +775,8 @@
   </div>
 
   <!-- Main JavaScript -->
-  <script src="app.js?v=rotation-3"></script>
+  <!-- Canonical reply classification, shared verbatim with the server. Must load first. -->
+  <script src="lib/classification.js?v=suppression-1"></script>
+  <script src="app.js?v=suppression-1"></script>
 </body>
 </html>

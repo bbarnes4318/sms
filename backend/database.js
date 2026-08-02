@@ -650,6 +650,32 @@ function updateMessageStatus(id, status, refId = null, errorMessage = null) {
   }
 }
 
+/* ------------------------------------------------------------------
+ * Reminder state
+ *
+ * Persisted so a reminder fires once per (conversation, scheduled time,
+ * tier) and survives refreshes and restarts. Rescheduling clears the rows
+ * for the old time, so a moved appointment can remind again.
+ * ------------------------------------------------------------------ */
+const REMINDER_TIERS = ['overdue', 'due_now', 'due_15', 'due_60'];
+
+function getNotifiedReminders() {
+  // Only rows still matching a live schedule matter; the rest are noise.
+  return db.prepare(`
+    SELECT r.conversation_id, r.scheduled_at, r.tier, r.notified_at
+    FROM reminder_state r
+    JOIN conversations c ON c.id = r.conversation_id AND c.scheduled_at = r.scheduled_at
+  `).all();
+}
+
+function acknowledgeReminder(conversationId, scheduledAt, tier) {
+  db.prepare(`
+    INSERT OR IGNORE INTO reminder_state (conversation_id, scheduled_at, tier)
+    VALUES (?, ?, ?)
+  `).run(conversationId, scheduledAt, tier);
+  console.log(`[reminder] delivered ${tier} for conversation ${conversationId} @ ${scheduledAt}Z`);
+}
+
 /**
  * Record a carrier delivery receipt. status='sent' only means the carrier
  * accepted the message; this is the only signal that it reached a handset.
@@ -1566,6 +1592,9 @@ module.exports = {
   cancelIfSuppressed,
   recordDelivery,
   recordCarrierStatus,
+  getNotifiedReminders,
+  acknowledgeReminder,
+  REMINDER_TIERS,
   SUPPRESSION_REASONS,
   SUPPRESSION_LABELS,
   getStats,
