@@ -11,7 +11,9 @@ database.sqlite
 __pycache__/
 
 # Test and CI artifacts
-tests/**/screenshots/
+**/screenshots/
+**/test-results/
+**/playwright-report/
 test-results/
 playwright-report/
 *.sqlite-wal
