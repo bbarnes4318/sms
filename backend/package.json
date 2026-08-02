@@ -7,9 +7,9 @@
     "start": "node server.js",
     "dev": "node server.js",
     "lint": "node --check server.js && node --check database.js && node --check queue.js && node --check public/lib/classification.js",
-    "test:unit": "node --test \"tests/unit/*.test.js\"",
-    "test:integration": "node --test \"tests/integration/*.test.js\"",
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test:unit": "node tests/run.js unit",
+    "test:integration": "node tests/run.js integration",
+    "test": "node tests/run.js",
     "test:e2e": "playwright test",
     "check": "npm run lint && npm test"
   },
