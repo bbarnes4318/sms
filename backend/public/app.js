@@ -2358,6 +2358,10 @@ function resolveDatePreset(preset) {
       from = shift(startOfWeek(today), -7);
       to = shift(from, 6);
       break;
+    case 'last-30':
+      from = shift(today, -29);
+      to = today;
+      break;
     case 'this-month':
       from = new Date(today.getFullYear(), today.getMonth(), 1);
       to = today;
@@ -2679,8 +2683,22 @@ async function loadStats() {
   loading.textContent = 'Loading performance data…';
   loading.style.display = 'block';
 
+  // Send the exact UTC instants that bound the user's LOCAL day range.
+  // Without this a message sent at 8pm Eastern lands on the next UTC day and
+  // disappears from "Today".
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const startLocal = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
+  const endLocal = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0); // exclusive
+  const tzOffset = -new Date().getTimezoneOffset(); // minutes to add to UTC
+
+  const query = `from=${from}&to=${to}` +
+    `&start=${encodeURIComponent(startLocal.toISOString())}` +
+    `&end=${encodeURIComponent(endLocal.toISOString())}` +
+    `&tz_offset=${tzOffset}`;
+
   try {
-    const res = await fetch(`/api/stats?from=${from}&to=${to}`);
+    const res = await fetch(`/api/stats?${query}`);
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error || 'Failed to load stats');
@@ -2719,7 +2737,7 @@ function setupStatsPanel() {
     overlay.classList.add('open');
     // Default to this month on first open, then keep whatever the user picked
     if (!fromInput.value || !toInput.value) {
-      applyStatsPreset('this-month');
+      applyStatsPreset('last-30');
     } else {
       loadStats();
     }

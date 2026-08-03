@@ -193,3 +193,59 @@ test('an inbound reply with no preceding outbound does not poison the average', 
       'the NULL gap is excluded rather than producing NaN');
   });
 });
+
+/* ---------------- timezone-correct windows ---------------- */
+
+test('a local day range counts messages by the users day, not the UTC day', () => {
+  // 22:30 UTC on Jul 5 is 18:30 on Jul 5 for a UTC-4 user, so it belongs to
+  // THEIR Jul 5. Under the old date(created_at) filter it also landed on Jul 5,
+  // but 02:30 UTC on Jul 6 is 22:30 on Jul 5 locally and used to be lost.
+  withTempConversation('+15554447777', id => {
+    seedMessage(raw, { conversationId: id, direction: 'outbound', status: 'sent', createdAt: '2026-07-05 22:30:00' });
+    seedMessage(raw, { conversationId: id, direction: 'outbound', status: 'sent', createdAt: '2026-07-06 02:30:00' });
+  }, () => {
+    // UTC-only view of "Jul 5": misses the 02:30 UTC message entirely.
+    const utcDay = db.getStats('2026-07-05', '2026-07-05');
+    assert.strictEqual(utcDay.sent.attempted, 1, 'UTC day sees only one of the two');
+
+    // The same day for a UTC-4 user runs 04:00 Jul 5 -> 04:00 Jul 6 UTC.
+    const localDay = db.getStats('2026-07-05', '2026-07-05', {
+      startUtc: '2026-07-05 04:00:00',
+      endUtc: '2026-07-06 04:00:00',
+      tzOffsetMinutes: -240
+    });
+    assert.strictEqual(localDay.sent.attempted, 2,
+      'both messages belong to the user\'s Jul 5');
+  });
+});
+
+test('the daily series is bucketed in the viewers timezone', () => {
+  withTempConversation('+15554446666', id => {
+    // 01:00 UTC on Jul 8 == 21:00 on Jul 7 for a UTC-4 user.
+    seedMessage(raw, { conversationId: id, direction: 'outbound', status: 'sent', createdAt: '2026-07-08 01:00:00' });
+  }, () => {
+    const local = db.getStats('2026-07-07', '2026-07-08', {
+      startUtc: '2026-07-07 04:00:00',
+      endUtc: '2026-07-09 04:00:00',
+      tzOffsetMinutes: -240
+    });
+    const day = local.daily.find(d => d.sent > 0);
+    assert.strictEqual(day.day, '2026-07-07', 'bucketed into the local day it was sent');
+  });
+});
+
+test('the range is half-open so a boundary message is counted exactly once', () => {
+  withTempConversation('+15554445555', id => {
+    seedMessage(raw, { conversationId: id, direction: 'outbound', status: 'sent', createdAt: '2026-07-06 04:00:00' });
+  }, () => {
+    const first = db.getStats('2026-07-05', '2026-07-05', {
+      startUtc: '2026-07-05 04:00:00', endUtc: '2026-07-06 04:00:00', tzOffsetMinutes: -240
+    });
+    const second = db.getStats('2026-07-06', '2026-07-06', {
+      startUtc: '2026-07-06 04:00:00', endUtc: '2026-07-07 04:00:00', tzOffsetMinutes: -240
+    });
+    assert.strictEqual(first.sent.attempted + second.sent.attempted, 1,
+      'the boundary instant belongs to exactly one of the two days');
+    assert.strictEqual(second.sent.attempted, 1, 'and it is the later day');
+  });
+});

@@ -495,7 +495,7 @@ app.post('/api/admin/backfill-suppression', (req, res) => {
 
 // 3.7. Performance stats for a date range
 app.get('/api/stats', (req, res) => {
-  const { from, to } = req.query;
+  const { from, to, start, end, tz_offset } = req.query;
 
   if (!isIsoDate(from) || !isIsoDate(to)) {
     return res.status(400).json({ error: 'from and to are required as YYYY-MM-DD' });
@@ -504,10 +504,28 @@ app.get('/api/stats', (req, res) => {
     return res.status(400).json({ error: 'from must not be after to' });
   }
 
+  // The browser sends the exact UTC instants bounding its LOCAL day range,
+  // plus its offset, so a message sent at 8pm Eastern is counted on the day
+  // the user actually sent it rather than rolling into the next UTC day.
+  const options = {};
+  if (start && end) {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate >= endDate) {
+      return res.status(400).json({ error: 'Invalid start/end instants' });
+    }
+    options.startUtc = startDate.toISOString().slice(0, 19).replace('T', ' ');
+    options.endUtc = endDate.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  const offset = Number(tz_offset);
+  if (Number.isFinite(offset) && Math.abs(offset) <= 900) {
+    options.tzOffsetMinutes = offset;
+  }
+
   try {
-    res.json(db.getStats(from, to));
+    res.json(db.getStats(from, to, options));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return fail(res, 500, 'Could not load stats', err);
   }
 });
 

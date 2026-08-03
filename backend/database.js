@@ -1306,8 +1306,15 @@ function setConversationDisposition(id, disposition, scheduledAt = null, note = 
   return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
 }
 
+/** Exclusive upper bound: midnight UTC at the start of the following day. */
+function nextUtcDay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /**
- * Performance stats for a UTC date range (inclusive, YYYY-MM-DD).
+ * Performance stats for a date range (inclusive, YYYY-MM-DD).
  *
  * TERMINOLOGY — these names match what the carrier data actually supports,
  * and the UI must not rename them:
@@ -1323,8 +1330,17 @@ function setConversationDisposition(id, disposition, scheduledAt = null, note = 
  *
  * Every rate documents its denominator in `rate_definitions`.
  */
-function getStats(fromDate, toDate) {
-  const range = [fromDate, toDate];
+function getStats(fromDate, toDate, options = {}) {
+  // Timestamps are stored UTC, but the user picks dates in THEIR timezone.
+  // Filtering on date(created_at) therefore attributed anything sent after
+  // local midnight-minus-offset to the wrong day - for a US user that is
+  // every message after ~8pm. The client sends the exact UTC instants that
+  // bound its local day range; when absent we fall back to UTC day bounds.
+  const startUtc = options.startUtc || `${fromDate} 00:00:00`;
+  const endUtc = options.endUtc || nextUtcDay(toDate);
+  // Minutes to add to a UTC timestamp to get the viewer's local time.
+  const tzShift = `${Number(options.tzOffsetMinutes) || 0} minutes`;
+  const range = [startUtc, endUtc];
 
   const outbound = db.prepare(`
     SELECT
@@ -1335,7 +1351,7 @@ function getStats(fromDate, toDate) {
       SUM(CASE WHEN status IN ('queued', 'sending') THEN 1 ELSE 0 END) as queued,
       COUNT(DISTINCT conversation_id) as contacts_reached
     FROM messages
-    WHERE direction = 'outbound' AND date(created_at) BETWEEN ? AND ?
+    WHERE direction = 'outbound' AND created_at >= ? AND created_at < ?
   `).get(...range);
 
   // Contacts actually handed to a carrier: the only defensible denominator for
@@ -1343,14 +1359,14 @@ function getStats(fromDate, toDate) {
   const contactsAccepted = db.prepare(`
     SELECT COUNT(DISTINCT conversation_id) as c
     FROM messages
-    WHERE direction = 'outbound' AND status = 'sent' AND date(created_at) BETWEEN ? AND ?
+    WHERE direction = 'outbound' AND status = 'sent' AND created_at >= ? AND created_at < ?
   `).get(...range).c || 0;
 
   // Inbound replies, classified through the single canonical module.
   const inboundRows = db.prepare(`
     SELECT conversation_id, body
     FROM messages
-    WHERE direction = 'inbound' AND date(created_at) BETWEEN ? AND ?
+    WHERE direction = 'inbound' AND created_at >= ? AND created_at < ?
   `).all(...range);
 
   const messageCounts = { positive: 0, negative: 0, opt_out: 0, wrong_number: 0, unknown: 0 };
@@ -1375,20 +1391,20 @@ function getStats(fromDate, toDate) {
 
   const daily = db.prepare(`
     SELECT
-      date(created_at) as day,
+      date(created_at, ?) as day,
       SUM(CASE WHEN direction = 'outbound' AND status = 'sent' THEN 1 ELSE 0 END) as sent,
       SUM(CASE WHEN direction = 'outbound' AND status = 'failed' THEN 1 ELSE 0 END) as failed,
       SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as replies
     FROM messages
-    WHERE date(created_at) BETWEEN ? AND ?
-    GROUP BY date(created_at)
+    WHERE created_at >= ? AND created_at < ?
+    GROUP BY date(created_at, ?)
     ORDER BY day ASC
-  `).all(...range);
+  `).all(tzShift, ...range, tzShift);
 
   const dispositionRows = db.prepare(`
     SELECT disposition, COUNT(*) as count
     FROM conversations
-    WHERE disposition IS NOT NULL AND date(disposition_at) BETWEEN ? AND ?
+    WHERE disposition IS NOT NULL AND disposition_at >= ? AND disposition_at < ?
     GROUP BY disposition
   `).all(...range);
 
@@ -1398,15 +1414,15 @@ function getStats(fromDate, toDate) {
   });
 
   const newLeads = db.prepare(`
-    SELECT COUNT(*) as count FROM conversations WHERE date(created_at) BETWEEN ? AND ?
+    SELECT COUNT(*) as count FROM conversations WHERE created_at >= ? AND created_at < ?
   `).get(...range).count;
 
   const suppression = db.prepare(`
     SELECT
-      SUM(CASE WHEN date(opted_out_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) as opt_outs,
-      SUM(CASE WHEN date(wrong_number_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) as wrong_numbers
+      SUM(CASE WHEN opted_out_at >= ? AND opted_out_at < ? THEN 1 ELSE 0 END) as opt_outs,
+      SUM(CASE WHEN wrong_number_at >= ? AND wrong_number_at < ? THEN 1 ELSE 0 END) as wrong_numbers
     FROM conversations
-  `).get(fromDate, toDate, fromDate, toDate);
+  `).get(startUtc, endUtc, startUtc, endUtc);
 
   // Minutes between our last outbound and their reply. Negative gaps are
   // impossible by construction, but the guard stops a clock change from
@@ -1420,18 +1436,18 @@ function getStats(fromDate, toDate) {
           AND o.created_at < m.created_at
       ))) * 1440 as gap
       FROM messages m
-      WHERE m.direction = 'inbound' AND date(m.created_at) BETWEEN ? AND ?
+      WHERE m.direction = 'inbound' AND m.created_at >= ? AND m.created_at < ?
     ) WHERE gap IS NOT NULL AND gap >= 0
   `).get(...range).avg_minutes;
 
   const peakHour = db.prepare(`
-    SELECT strftime('%H', created_at) as hour, COUNT(*) as count
+    SELECT strftime('%H', created_at, ?) as hour, COUNT(*) as count
     FROM messages
-    WHERE direction = 'inbound' AND date(created_at) BETWEEN ? AND ?
+    WHERE direction = 'inbound' AND created_at >= ? AND created_at < ?
     GROUP BY hour
     ORDER BY count DESC, hour ASC
     LIMIT 1
-  `).get(...range);
+  `).get(tzShift, ...range);
 
   const attempted = outbound.attempted || 0;
   const carrierAccepted = outbound.carrier_accepted || 0;
