@@ -5,7 +5,7 @@ import sys
 
 # Server configuration
 SERVER_IP = '178.156.174.135'
-SSH_KEY = 'scripts/id_ed25519'
+SSH_KEY = 'scripts/id_ed25519' if os.path.exists('scripts/id_ed25519') else os.path.expanduser('~/.ssh/id_ed25519')
 
 def make_tarfile(output_filename, source_dir):
     print(f"Creating tarball of {source_dir}...")
