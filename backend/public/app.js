@@ -2230,7 +2230,6 @@ function getEstOffsetString(dateStr) {
   return (month >= 3 && month <= 11) ? '-04:00' : '-05:00';
 }
 
-/** Parse a timestamp into a Date, preserving EST naive strings without offset error. */
 function parseUtc(stamp) {
   if (!stamp) return null;
   if (stamp instanceof Date) return isNaN(stamp.getTime()) ? null : stamp;
@@ -2238,13 +2237,11 @@ function parseUtc(stamp) {
   let str = String(stamp).trim();
   if (!str) return null;
   str = str.replace(' ', 'T');
-  if (/[Zz]|[+-]\d{2}:?\d{2}$/.test(str)) {
-    const d = new Date(str);
-    return isNaN(d.getTime()) ? null : d;
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(str)) {
+    str += 'Z';
   }
-  const offset = getEstOffsetString(str);
-  const date = new Date(`${str}${offset}`);
-  return isNaN(date.getTime()) ? new Date(str) : date;
+  const date = new Date(str);
+  return isNaN(date.getTime()) ? null : date;
 }
 
 /** Minutes until a scheduled time. Negative means overdue. */
