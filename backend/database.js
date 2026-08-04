@@ -1586,18 +1586,27 @@ function deleteSession(token) {
 }
 
 function getNotesForTarget({ conversationId, phoneNumber }) {
-  if (conversationId) {
+  const convIdNum = typeof conversationId === 'number' ? conversationId : (parseInt(conversationId, 10) || 0);
+  const phone = (phoneNumber && typeof phoneNumber === 'string') ? phoneNumber.trim() : null;
+
+  if (convIdNum > 0 && phone) {
     return db.prepare(`
       SELECT * FROM notes 
       WHERE conversation_id = ? OR (phone_number IS NOT NULL AND phone_number != '' AND phone_number = ?)
       ORDER BY created_at DESC, id DESC
-    `).all(conversationId, phoneNumber || '');
-  } else if (phoneNumber) {
+    `).all(convIdNum, phone);
+  } else if (convIdNum > 0) {
+    return db.prepare(`
+      SELECT * FROM notes 
+      WHERE conversation_id = ?
+      ORDER BY created_at DESC, id DESC
+    `).all(convIdNum);
+  } else if (phone) {
     return db.prepare(`
       SELECT * FROM notes 
       WHERE phone_number = ? 
       ORDER BY created_at DESC, id DESC
-    `).all(phoneNumber);
+    `).all(phone);
   }
   return [];
 }
@@ -1607,12 +1616,13 @@ function getNotesForConversation(conversationId) {
 }
 
 function addNoteForTarget({ conversationId, phoneNumber, noteText }) {
-  const convIdNum = (conversationId && typeof conversationId === 'number') ? conversationId : 0;
+  const convIdNum = typeof conversationId === 'number' ? conversationId : (parseInt(conversationId, 10) || 0);
+  const phone = (phoneNumber && typeof phoneNumber === 'string') ? phoneNumber.trim() : null;
   const stmt = db.prepare(`
     INSERT INTO notes (conversation_id, phone_number, note_text, created_at)
     VALUES (?, ?, ?, datetime('now'))
   `);
-  const result = stmt.run(convIdNum, phoneNumber || null, noteText ? noteText.trim() : '');
+  const result = stmt.run(convIdNum, phone, noteText ? noteText.trim() : '');
   return db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid);
 }
 

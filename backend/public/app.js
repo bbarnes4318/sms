@@ -365,6 +365,12 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeNotesDrawer();
+    }
+  });
+
   // Range slider label sync
   settingInterval.addEventListener('input', (e) => {
     settingIntervalVal.textContent = `${e.target.value} ms`;
