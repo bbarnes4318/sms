@@ -1448,12 +1448,14 @@ function renderConversations() {
         <span class="checkbox-custom"></span>
       </label>`;
 
+    const stateBadge = renderStateBadge(c.phone_number);
+
     item.innerHTML = `
       ${checkboxHtml}
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
-          <span class="conv-name">${escapeHTML(displayName)}${repliedDot}</span>
+          <span class="conv-name">${escapeHTML(displayName)} ${stateBadge}${repliedDot}</span>
           <span class="conv-time">${timeStr}</span>
         </div>
         <div class="conv-preview${overdueClass}">${previewIcon}<span class="conv-preview-text">${escapeHTML(preview)}</span>${stageChip}</div>
@@ -1854,9 +1856,8 @@ function appendMessageToFeed(msg) {
   bubble.className = `message-bubble ${msg.direction}`;
   bubble.dataset.msgId = msg.id;
 
-  // Format time
-  const date = new Date(msg.created_at || msg.sent_at || Date.now());
-  const timeStr = formatMessageTimestamp(date);
+  // Format time using parseUtc
+  const timeStr = formatMessageTimestamp(msg.created_at || msg.sent_at);
 
   // Attachments
   let attachmentHtml = '';
@@ -2166,11 +2167,18 @@ const REMINDER_TIERS = [
 const REMINDER_POLL_MS = 60000;
 let reminderTimer = null;
 
-/** Parse a server UTC timestamp into a Date. */
+/** Parse a server UTC timestamp into a Date safely. */
 function parseUtc(stamp) {
   if (!stamp) return null;
-  const normalized = String(stamp).replace(' ', 'T');
-  const date = new Date(/[Zz]|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+  if (stamp instanceof Date) return isNaN(stamp.getTime()) ? null : stamp;
+  if (typeof stamp === 'number') return new Date(stamp);
+  let str = String(stamp).trim();
+  if (!str) return null;
+  str = str.replace(' ', 'T');
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(str)) {
+    str += 'Z';
+  }
+  const date = new Date(str);
   return isNaN(date.getTime()) ? null : date;
 }
 
