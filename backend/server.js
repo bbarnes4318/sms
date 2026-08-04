@@ -1008,8 +1008,12 @@ app.post('/webhook/inbound', (req, res) => {
   }
 });
 
-// Serve frontend routing fallback
+// Serve frontend routing fallback with strict no-cache headers
 app.get('*', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Clear-Site-Data', '"cache"');
   res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
 });
 
