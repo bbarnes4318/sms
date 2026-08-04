@@ -1749,7 +1749,7 @@ function renderStateBadge(phone) {
   if (!phone) return '';
   const state = getStateFromPhoneInline(phone) || (window.AreaCodes ? window.AreaCodes.getStateFromPhone(phone) : null);
   if (!state) return '';
-  return `<span class="prospect-state-badge" title="State for area code">${escapeHTML(state)}</span>`;
+  return `<span class="prospect-state-badge" style="display: inline-flex !important; background: #2563eb !important; color: #ffffff !important; font-size: 12px !important; font-weight: 800 !important; padding: 2px 8px !important; border-radius: 5px !important; margin-left: 6px !important; vertical-align: middle !important;" title="State for area code">${escapeHTML(state)}</span>`;
 }
 
 // 6. Select active chat
