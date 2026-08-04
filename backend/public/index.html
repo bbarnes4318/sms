@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="style.css?v=notes-est-v25">
+  <link rel="stylesheet" href="style_v2.css?v=fresh-2026">
 </head>
 <body>
   <div class="app-container">
@@ -23,6 +23,10 @@
             <button type="button" id="btn-open-stats" class="btn-map-link" title="Open performance stats">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
               <span>Stats</span>
+            </button>
+            <button type="button" id="btn-sidebar-notes" class="btn-notes" title="Open Prospect Notes">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+              <span>Notes</span>
             </button>
             <a href="/storm-map" target="_blank" rel="noopener noreferrer" class="btn-map-link" title="Open Storm Intelligence Map in a new tab">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>
@@ -811,8 +815,8 @@
 
   <!-- Main JavaScript -->
   <!-- Canonical reply classification, shared verbatim with the server. Must load first. -->
-  <script src="lib/classification.js?v=notes-est-v25"></script>
-  <script src="lib/area_codes.js?v=notes-est-v25"></script>
-  <script src="app.js?v=notes-est-v25"></script>
+  <script src="lib/classification.js?v=fresh-2026"></script>
+  <script src="lib/area_codes_v2.js?v=fresh-2026"></script>
+  <script src="app_v2.js?v=fresh-2026"></script>
 </body>
 </html>
