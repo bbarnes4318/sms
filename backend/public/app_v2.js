@@ -1455,7 +1455,7 @@ function renderConversations() {
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
-          <span class="conv-name">${escapeHTML(displayName)} ${stateBadge}${repliedDot}</span>
+          <span class="conv-name">${escapeHTML(displayName)}${repliedDot}</span>${stateBadge}
           <span class="conv-time">${timeStr}</span>
         </div>
         <div class="conv-preview${overdueClass}">${previewIcon}<span class="conv-preview-text">${escapeHTML(preview)}</span>${stageChip}</div>
