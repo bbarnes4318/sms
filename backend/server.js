@@ -245,8 +245,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve main static assets
-app.use(express.static(path.resolve(__dirname, 'public')));
+// Serve main static assets with strict no-cache headers
+app.use(express.static(path.resolve(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, filePath) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+}));
 
 // Store WebSocket clients
 const clients = new Set();
@@ -431,12 +439,12 @@ app.post('/api/conversations/:id/opt-in', (req, res) => {
 
 // Notes API
 app.get('/api/conversations/:id/notes', (req, res) => {
-  const convId = parseConversationId(req.params.id);
-  if (convId === null) {
-    return res.status(400).json({ error: 'Invalid conversation id' });
-  }
+  const paramId = req.params.id;
+  const phoneNumber = req.query.phone_number || null;
+  let convId = parseConversationId(paramId);
+
   try {
-    const notes = db.getNotesForConversation(convId);
+    const notes = db.getNotesForTarget({ conversationId: convId, phoneNumber });
     res.json(notes);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -444,16 +452,20 @@ app.get('/api/conversations/:id/notes', (req, res) => {
 });
 
 app.post('/api/conversations/:id/notes', (req, res) => {
-  const convId = parseConversationId(req.params.id);
-  if (convId === null) {
-    return res.status(400).json({ error: 'Invalid conversation id' });
-  }
+  const paramId = req.params.id;
   const { note_text, phone_number } = req.body;
+  let convId = parseConversationId(paramId);
+
   if (!note_text || typeof note_text !== 'string' || !note_text.trim()) {
     return res.status(400).json({ error: 'Note text is required' });
   }
+
   try {
-    const newNote = db.addNoteForConversation(convId, note_text, phone_number || null);
+    const newNote = db.addNoteForTarget({
+      conversationId: convId,
+      phoneNumber: phone_number || null,
+      noteText: note_text
+    });
     broadcast('note_created', { conversation_id: convId, note: newNote });
     res.json(newNote);
   } catch (err) {

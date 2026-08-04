@@ -1585,21 +1585,39 @@ function deleteSession(token) {
   return db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
 }
 
-function getNotesForConversation(conversationId) {
-  return db.prepare(`
-    SELECT * FROM notes 
-    WHERE conversation_id = ? 
-    ORDER BY created_at DESC, id DESC
-  `).all(conversationId);
+function getNotesForTarget({ conversationId, phoneNumber }) {
+  if (conversationId) {
+    return db.prepare(`
+      SELECT * FROM notes 
+      WHERE conversation_id = ? OR (phone_number IS NOT NULL AND phone_number != '' AND phone_number = ?)
+      ORDER BY created_at DESC, id DESC
+    `).all(conversationId, phoneNumber || '');
+  } else if (phoneNumber) {
+    return db.prepare(`
+      SELECT * FROM notes 
+      WHERE phone_number = ? 
+      ORDER BY created_at DESC, id DESC
+    `).all(phoneNumber);
+  }
+  return [];
 }
 
-function addNoteForConversation(conversationId, noteText, phoneNumber = null) {
+function getNotesForConversation(conversationId) {
+  return getNotesForTarget({ conversationId });
+}
+
+function addNoteForTarget({ conversationId, phoneNumber, noteText }) {
+  const convIdNum = (conversationId && typeof conversationId === 'number') ? conversationId : 0;
   const stmt = db.prepare(`
     INSERT INTO notes (conversation_id, phone_number, note_text, created_at)
     VALUES (?, ?, ?, datetime('now'))
   `);
-  const result = stmt.run(conversationId, phoneNumber, noteText ? noteText.trim() : '');
+  const result = stmt.run(convIdNum, phoneNumber || null, noteText ? noteText.trim() : '');
   return db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function addNoteForConversation(conversationId, noteText, phoneNumber = null) {
+  return addNoteForTarget({ conversationId, phoneNumber, noteText });
 }
 
 function deleteNote(noteId) {
@@ -1609,6 +1627,11 @@ function deleteNote(noteId) {
 module.exports = {
   db,
   initDatabase,
+  getNotesForTarget,
+  addNoteForTarget,
+  getNotesForConversation,
+  addNoteForConversation,
+  deleteNote,
   getSettings,
   updateSettings,
   getConversations,

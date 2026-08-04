@@ -1691,12 +1691,22 @@ function updateSuppressionNotice(conv) {
   if (composer) composer.style.display = 'none';
 }
 
+function renderStateBadge(phone) {
+  if (!phone) return '';
+  const state = window.AreaCodes ? window.AreaCodes.getStateFromPhone(phone) : null;
+  if (!state) return '';
+  return `<span class="prospect-state-badge" title="State for area code ${window.AreaCodes.extractAreaCode(phone)}">${escapeHTML(state)}</span>`;
+}
+
 // 6. Select active chat
 async function selectConversation(conv) {
   activeConversation = conv;
   updateSentimentBadge(conv);
   updateDispositionBar(conv);
   updateSuppressionNotice(conv);
+
+  const btnToggleNotes = document.getElementById('btn-toggle-notes');
+  if (btnToggleNotes) btnToggleNotes.style.display = 'inline-flex';
 
   if (conv && conv.isLead) {
     // UI Selection styling
@@ -1716,13 +1726,13 @@ async function selectConversation(conv) {
     
     // Setup Chat Header
     const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
+    const stateBadge = renderStateBadge(conv.phone_number);
     activeAvatar.textContent = initials;
-    activeContactName.textContent = conv.name || conv.phone_number;
-    activeContactPhone.textContent = conv.leadData.stormType === "Demo Form" 
-      ? `Demo Form Submission · ${conv.leadData.roofAge}`
-      : `Demo Lead · ${conv.leadData.address}, ${conv.leadData.city}, ${conv.leadData.state}`;
+    activeContactName.innerHTML = `${escapeHTML(conv.name || conv.phone_number)} ${stateBadge}`;
+    activeContactPhone.innerHTML = `<span style="font-weight:600;">${escapeHTML(conv.phone_number)}</span> ${stateBadge} · Demo Lead`;
     
     btnDeleteChat.style.display = 'none';
+    loadNotesForActiveConversation();
     
     let detailsHtml = '';
     if (conv.leadData.stormType === "Demo Form") {
@@ -1751,7 +1761,7 @@ async function selectConversation(conv) {
           <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
             <div class="avatar" style="background: var(--primary-gradient); color: white; border: none;">${initials}</div>
             <div>
-              <h3 style="font-family: var(--font-heading); font-size: 15px; color: var(--text-main); margin: 0;">${conv.name}</h3>
+              <h3 style="font-family: var(--font-heading); font-size: 15px; color: var(--text-main); margin: 0;">${conv.name} ${stateBadge}</h3>
               <p class="subtext" style="margin: 2px 0 0 0;">${conv.phone_number}</p>
             </div>
           </div>
@@ -1793,13 +1803,12 @@ async function selectConversation(conv) {
 
   // Setup Chat Header
   const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
-  activeAvatar.textContent = initials;
-  activeContactName.textContent = conv.name || conv.phone_number;
-
   const phoneStr = conv.phone_number || '';
-  const stateAbbr = window.AreaCodes ? window.AreaCodes.getStateFromPhone(phoneStr) : null;
-  const stateBadgeHtml = stateAbbr ? `<span class="prospect-state-badge" title="State for area code ${window.AreaCodes.extractAreaCode(phoneStr)}">${stateAbbr}</span>` : '';
-  activeContactPhone.innerHTML = `${escapeHTML(phoneStr)} ${stateBadgeHtml}`;
+  const stateBadge = renderStateBadge(phoneStr);
+
+  activeAvatar.textContent = initials;
+  activeContactName.innerHTML = `${escapeHTML(conv.name || phoneStr)} ${stateBadge}`;
+  activeContactPhone.innerHTML = `<span style="font-weight:600;">${escapeHTML(phoneStr)}</span> ${stateBadge}`;
   
   // Show the composer only when the contact may actually be messaged.
   // updateSuppressionNotice hides it, and this used to override that.
@@ -3337,7 +3346,7 @@ async function loadNotesForActiveConversation() {
   const btnToggleNotes = document.getElementById('btn-toggle-notes');
   if (!btnToggleNotes) return;
 
-  if (!activeConversation || activeConversation.isLead) {
+  if (!activeConversation) {
     btnToggleNotes.style.display = 'none';
     closeNotesDrawer();
     return;
@@ -3346,7 +3355,10 @@ async function loadNotesForActiveConversation() {
   btnToggleNotes.style.display = 'inline-flex';
 
   try {
-    const res = await fetch(`/api/conversations/${activeConversation.id}/notes`);
+    const targetId = activeConversation.id;
+    const phone = activeConversation.phone_number || '';
+    const url = `/api/conversations/${targetId}/notes?phone_number=${encodeURIComponent(phone)}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load notes");
     activeNotes = await res.json();
     renderNotesFeed();

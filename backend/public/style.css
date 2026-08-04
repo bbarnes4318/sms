@@ -3411,27 +3411,28 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 6px 12px;
+  background: #f59e0b;
+  border: 1px solid #fbbf24;
+  color: #000000;
+  padding: 6px 14px;
   border-radius: var(--border-radius-sm);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
   transition: var(--transition-smooth);
 }
 .btn-notes:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
+  background: #d97706;
+  border-color: #f59e0b;
+  color: #ffffff;
 }
 .notes-count-badge {
-  background: var(--accent-primary);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
+  background: #000000;
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
   border-radius: 10px;
 }
 
@@ -3585,14 +3586,17 @@ body {
 
 /* Header State Abbreviation Badge */
 .prospect-state-badge {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 4px;
+  background: #2563eb;
+  color: #ffffff;
+  border: 1px solid #3b82f6;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 5px;
   margin-left: 6px;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.4);
+  vertical-align: middle;
 }
