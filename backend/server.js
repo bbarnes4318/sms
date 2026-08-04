@@ -228,7 +228,8 @@ const PUBLIC_PATHS = [
 ];
 
 app.use((req, res, next) => {
-  if (PUBLIC_PATHS.includes(req.path) || req.path.startsWith('/webhook/')) {
+  const isStaticAsset = /\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/i.test(req.path) || req.path.startsWith('/lib/');
+  if (PUBLIC_PATHS.includes(req.path) || req.path.startsWith('/webhook/') || isStaticAsset) {
     return next();
   }
 
