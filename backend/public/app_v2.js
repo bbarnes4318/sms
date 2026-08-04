@@ -345,15 +345,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Prospect Notes UI listeners
   const btnToggleNotes = document.getElementById('btn-toggle-notes');
+  const btnToggleNotesHeader = document.getElementById('btn-toggle-notes-header');
+  const btnFloatingNotes = document.getElementById('btn-floating-notes');
   const btnCloseNotes = document.getElementById('btn-close-notes');
   const notesAddForm = document.getElementById('notes-add-form');
 
-  if (btnToggleNotes) {
-    btnToggleNotes.addEventListener('click', toggleNotesDrawer);
-  }
-  if (btnCloseNotes) {
-    btnCloseNotes.addEventListener('click', closeNotesDrawer);
-  }
+  if (btnToggleNotes) btnToggleNotes.addEventListener('click', toggleNotesDrawer);
+  if (btnToggleNotesHeader) btnToggleNotesHeader.addEventListener('click', toggleNotesDrawer);
+  if (btnFloatingNotes) btnFloatingNotes.addEventListener('click', toggleNotesDrawer);
+  if (btnCloseNotes) btnCloseNotes.addEventListener('click', closeNotesDrawer);
   if (notesAddForm) {
     notesAddForm.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -3438,14 +3438,15 @@ async function loadNotesForActiveConversation() {
 }
 
 function renderNotesFeed() {
-  const badgeCount = document.getElementById('notes-badge-count');
+  ['notes-badge-count', 'notes-badge-count-header', 'notes-badge-count-floating'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = activeNotes.length;
+      el.style.display = activeNotes.length > 0 ? 'inline-block' : 'none';
+    }
+  });
   const metaEl = document.getElementById('notes-prospect-meta');
   const feedEl = document.getElementById('notes-feed');
-
-  if (badgeCount) {
-    badgeCount.textContent = activeNotes.length;
-    badgeCount.style.display = activeNotes.length > 0 ? 'inline-block' : 'none';
-  }
 
   if (metaEl && activeConversation) {
     const nameStr = activeConversation.name || 'Unnamed Prospect';

@@ -12,6 +12,7 @@
   }
 }(typeof self !== 'undefined' ? self : this, function() {
   const AREA_CODE_MAP = {
+  "555": "FL",
   "201": "NJ",
   "202": "DC",
   "203": "CT",

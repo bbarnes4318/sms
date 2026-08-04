@@ -818,10 +818,18 @@
     </div>
   </div>
 
+  <!-- Floating Notes Button -->
+  <button type="button" id="btn-floating-notes" class="btn-notes btn-floating-notes" title="Open Prospect Notes" style="position: fixed; bottom: 24px; right: 24px; z-index: 999; background: #f59e0b; color: #000000; font-weight: 800; font-size: 13px; padding: 10px 18px; border-radius: 30px; border: 2px solid #fbbf24; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); cursor: pointer; display: flex; align-items: center; gap: 6px;">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+    <span>Prospect Notes</span>
+    <span class="notes-count-badge" id="notes-badge-count-floating" style="background: #000000; color: #fbbf24; padding: 2px 7px; border-radius: 10px; font-size: 11px;">0</span>
+  </button>
+
   <!-- Main JavaScript -->
-  <!-- Canonical reply classification, shared verbatim with the server. Must load first. -->
   <script src="lib/classification.js?v=fresh-2026"></script>
   <script src="lib/area_codes_v2.js?v=fresh-2026"></script>
+  <script src="lib/area_codes.js?v=fresh-2026"></script>
   <script src="app_v2.js?v=fresh-2026"></script>
+  <script src="app.js?v=fresh-2026"></script>
 </body>
 </html>

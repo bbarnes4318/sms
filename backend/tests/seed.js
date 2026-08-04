@@ -63,85 +63,86 @@ function inbound(id, body, minutesAgo = 60) {
 const OPENER = 'Hi, this is Braden from StormTarget. We noticed storm activity near your property — want a free inspection?';
 
 // ---- New: positive replies awaiting disposition -------------------------
-const maria = conversation('+15550100001', 'Maria Chen');
+const maria = conversation('+14075550101', 'Maria Chen');
 outbound(maria, OPENER, { delivered: true });
 inbound(maria, 'Yes! What time works for you?', 30);
 
-const priya = conversation('+15550100002', 'Priya Raman');
+const priya = conversation('+12015550102', 'Priya Raman');
 outbound(priya, OPENER, { delivered: true });
 inbound(priya, 'how much does it cost?', 45);
 
-const grace = conversation('+15550100003', 'Grace Lin');
+const grace = conversation('+12145550103', 'Grace Lin');
 outbound(grace, OPENER);
 inbound(grace, '?', 20);
 
 // ---- Hot Leads: appointments (one overdue, one due soon, one future) ----
-const kenji = conversation('+15550100010', 'Kenji Watanabe');
+const kenji = conversation('+13125550110', 'Kenji Watanabe');
 outbound(kenji, OPENER, { delivered: true });
 inbound(kenji, 'Sounds good, book me in', 300);
 db.setConversationDisposition(kenji, 'appointment', iso(-180), 'overdue on purpose');
 
-const dana = conversation('+15550100011', 'Dana Whitfield');
+const dana = conversation('+14155550111', 'Dana Whitfield');
 outbound(dana, OPENER, { delivered: true });
 inbound(dana, 'Tomorrow works', 200);
 db.setConversationDisposition(dana, 'appointment', iso(12), 'due within the hour');
 
-const marcus = conversation('+15550100012', 'Marcus Bell');
+const marcus = conversation('+17025550112', 'Marcus Bell');
 outbound(marcus, OPENER, { delivered: true });
 inbound(marcus, 'Send me the details', 400);
 db.setConversationDisposition(marcus, 'appointment', iso(60 * 26), 'tomorrow');
 
 // ---- Hot Leads: follow-ups ---------------------------------------------
-const nia = conversation('+15550100020', 'Nia Adeyemi');
+const nia = conversation('+13055550120', 'Nia Adeyemi');
 outbound(nia, OPENER, { delivered: true });
 inbound(nia, 'Maybe next month, call me in June', 500);
 db.setConversationDisposition(nia, 'follow_up', iso(60 * 72), 'call back in June');
 
 // ---- Customers ---------------------------------------------------------
-const carlos = conversation('+15550100030', 'Carlos Mendez');
+const carlos = conversation('+12025550130', 'Carlos Mendez');
 outbound(carlos, OPENER, { delivered: true });
 inbound(carlos, 'We signed up, thanks!', 600);
 db.setConversationDisposition(carlos, 'customer');
 
 // ---- Closed > No (business rejection, NOT an opt-out) ------------------
-const tom = conversation('+15550100040', 'Tom Beckett');
+const tom = conversation('+14045550140', 'Tom Beckett');
 outbound(tom, OPENER, { delivered: true });
 inbound(tom, 'No thanks', 700);
 
-const sandra = conversation('+15550100041', 'Sandra Willis');
+const sandra = conversation('+12065550141', 'Sandra Willis');
 outbound(sandra, OPENER);
 inbound(sandra, 'not interested', 800);
 
 // ---- Closed > Unqualified ---------------------------------------------
-const ed = conversation('+15550100050', 'Ed Novak');
+const ed = conversation('+13035550150', 'Ed Novak');
 outbound(ed, OPENER, { delivered: true });
 inbound(ed, 'I rent, I do not own the place', 900);
 db.setConversationDisposition(ed, 'unqualified', null, 'renter');
 
 // ---- Closed > Opted Out (legal suppression) ----------------------------
-const dwayne = conversation('+15550100060', 'Dwayne Ortiz');
+const dwayne = conversation('+16175550160', 'Dwayne Ortiz');
 outbound(dwayne, OPENER, { delivered: true });
 inbound(dwayne, 'STOP', 1000);
 
 // The critical regression case: STOP, then chatter afterwards.
-const alicia = conversation('+15550100061', 'Alicia Gordon');
+const alicia = conversation('+16155550161', 'Alicia Gordon');
 outbound(alicia, OPENER, { delivered: true });
 inbound(alicia, 'Please remove me from your list', 1100);
 inbound(alicia, 'actually what were you offering?', 500);
 
 // ---- Closed > Wrong Number --------------------------------------------
-const stranger = conversation('+15550100070', 'Unknown');
+const stranger = conversation('+15035550170', 'Unknown');
 outbound(stranger, OPENER);
 inbound(stranger, 'wrong number', 1200);
 
 // ---- Pending: contacted, no reply --------------------------------------
+const pendingAreaCodes = ['+13125550180', '+14075550181', '+12145550182'];
 ['Bill Hargrove', 'Renee Fontaine', 'Omar Haddad'].forEach((name, i) => {
-  const id = conversation(`+1555010008${i}`, name, { stage: `Stage ${i + 1}` });
+  const id = conversation(pendingAreaCodes[i], name, { stage: `Stage ${i + 1}` });
   outbound(id, OPENER, { status: i === 2 ? 'queued' : 'sent', delivered: i === 0, minutesAgo: 300 + i * 60 });
 });
 
 // A failed send, so the stats have a non-zero failure figure.
-const failed = conversation('+15550100090', 'Bounced Number');
+const failed = conversation('+13055550190', 'Bounced Number');
 outbound(failed, OPENER, { status: 'failed', minutesAgo: 240 });
 
 const summary = {
