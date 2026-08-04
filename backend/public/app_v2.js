@@ -1755,7 +1755,7 @@ function renderStateBadge(phone) {
   if (!phone) return '';
   const state = getStateFromPhoneInline(phone) || (window.AreaCodes ? window.AreaCodes.getStateFromPhone(phone) : null);
   if (!state) return '';
-  return `<span class="prospect-state-badge" style="display: inline-flex !important; background: #2563eb !important; color: #ffffff !important; font-size: 12px !important; font-weight: 800 !important; padding: 2px 8px !important; border-radius: 5px !important; margin-left: 6px !important; vertical-align: middle !important;" title="State for area code">${escapeHTML(state)}</span>`;
+  return `<span class="prospect-state-badge" style="display: inline-flex !important; align-items: center !important; justify-content: center !important; background: #2563eb !important; color: #ffffff !important; font-size: 11px !important; font-weight: 700 !important; padding: 1px 6px !important; border-radius: 4px !important; margin-left: 6px !important; vertical-align: middle !important; letter-spacing: 0.5px !important;" title="State for area code">${escapeHTML(state)}</span>`;
 }
 
 // 6. Select active chat
@@ -1788,7 +1788,7 @@ async function selectConversation(conv) {
     const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
     const stateBadge = renderStateBadge(conv.phone_number);
     activeAvatar.textContent = initials;
-    activeContactName.innerHTML = `${escapeHTML(conv.name || conv.phone_number)} ${stateBadge}`;
+    activeContactName.innerHTML = `${escapeHTML(conv.name || conv.phone_number)}`;
     activeContactPhone.innerHTML = `<span style="font-weight:600;">${escapeHTML(conv.phone_number)}</span> ${stateBadge} · Demo Lead`;
     
     btnDeleteChat.style.display = 'none';
@@ -1867,7 +1867,7 @@ async function selectConversation(conv) {
   const stateBadge = renderStateBadge(phoneStr);
 
   activeAvatar.textContent = initials;
-  activeContactName.innerHTML = `${escapeHTML(conv.name || phoneStr)} ${stateBadge}`;
+  activeContactName.innerHTML = `${escapeHTML(conv.name || phoneStr)}`;
   activeContactPhone.innerHTML = `<span style="font-weight:600;">${escapeHTML(phoneStr)}</span> ${stateBadge}`;
   
   // Show the composer only when the contact may actually be messaged.

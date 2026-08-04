@@ -24,10 +24,6 @@
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
               <span>Stats</span>
             </button>
-            <button type="button" id="btn-sidebar-notes" class="btn-map-link btn-notes" title="Open Prospect Notes" style="display: inline-flex !important; background: #f59e0b !important; color: #000000 !important; font-weight: 700 !important; border: 1px solid #fbbf24 !important;">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-              <span>Notes</span>
-            </button>
             <a href="/storm-map" target="_blank" rel="noopener noreferrer" class="btn-map-link" title="Open Storm Intelligence Map in a new tab">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-svg"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>
               <span>Storm Map</span>
@@ -206,11 +202,6 @@
           <div>
             <div class="active-contact-name-row">
               <h2 id="active-contact-name">Select a conversation</h2>
-              <button type="button" id="btn-toggle-notes-header" class="btn-notes" title="Toggle Prospect Notes" style="display: inline-flex !important; margin-left: 8px;">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-                <span>Notes</span>
-                <span class="notes-count-badge" id="notes-badge-count-header">0</span>
-              </button>
               <span class="sentiment-badge" id="active-sentiment-badge" style="display: none;"></span>
             </div>
             <p id="active-contact-phone" class="subtext">Select or start a chat to send messages</p>
@@ -218,7 +209,7 @@
         </div>
         <div class="chat-actions">
           <span class="status-indicator online" id="ws-status">WS Connecting</span>
-          <button type="button" id="btn-toggle-notes" class="btn-notes" title="Toggle Prospect Notes" style="display: inline-flex !important;">
+          <button type="button" id="btn-toggle-notes" class="btn-notes" title="Toggle Prospect Notes">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
             <span>Notes</span>
             <span class="notes-count-badge" id="notes-badge-count">0</span>
@@ -817,13 +808,6 @@
       </form>
     </div>
   </div>
-
-  <!-- Floating Notes Button -->
-  <button type="button" id="btn-floating-notes" class="btn-notes btn-floating-notes" title="Open Prospect Notes" style="position: fixed; bottom: 24px; right: 24px; z-index: 999; background: #f59e0b; color: #000000; font-weight: 800; font-size: 13px; padding: 10px 18px; border-radius: 30px; border: 2px solid #fbbf24; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); cursor: pointer; display: flex; align-items: center; gap: 6px;">
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-    <span>Prospect Notes</span>
-    <span class="notes-count-badge" id="notes-badge-count-floating" style="background: #000000; color: #fbbf24; padding: 2px 7px; border-radius: 10px; font-size: 11px;">0</span>
-  </button>
 
   <!-- Main JavaScript -->
   <script src="lib/classification.js?v=fresh-2026"></script>
