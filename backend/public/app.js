@@ -54,9 +54,9 @@ function replyClassificationOf(conv) {
  * ------------------------------------------------------------------ */
 const FOLDERS = {
   'new':        { views: ['new'] },
-  'hot':        { views: ['appointment', 'follow_up'] },
+  'hot':        { views: ['all_hot', 'appointment', 'follow_up'] },
   'customer':   { views: ['customer'] },
-  'closed':     { views: ['no', 'unqualified', 'opted_out', 'wrong_number'] },
+  'closed':     { views: ['all_closed', 'no', 'unqualified', 'opted_out', 'wrong_number'] },
   'pending':    { views: ['pending'] },
   'storm-demo': { views: ['storm-demo'] }
 };
@@ -342,6 +342,28 @@ window.addEventListener('DOMContentLoaded', () => {
   newChatModal.addEventListener('click', (e) => {
     if (e.target === newChatModal) newChatModal.classList.remove('remove');
   });
+
+  // Prospect Notes UI listeners
+  const btnToggleNotes = document.getElementById('btn-toggle-notes');
+  const btnCloseNotes = document.getElementById('btn-close-notes');
+  const notesAddForm = document.getElementById('notes-add-form');
+
+  if (btnToggleNotes) {
+    btnToggleNotes.addEventListener('click', toggleNotesDrawer);
+  }
+  if (btnCloseNotes) {
+    btnCloseNotes.addEventListener('click', closeNotesDrawer);
+  }
+  if (notesAddForm) {
+    notesAddForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const textarea = document.getElementById('note-input');
+      if (textarea && textarea.value.trim()) {
+        addNoteForActiveConversation(textarea.value);
+        textarea.value = '';
+      }
+    });
+  }
 
   // Range slider label sync
   settingInterval.addEventListener('input', (e) => {
@@ -1211,7 +1233,16 @@ function getFilteredConversations() {
   }
 
   const list = applyBaseFilters(conversations)
-    .filter(c => getConversationBucket(c) === currentView);
+    .filter(c => {
+      const bucket = getConversationBucket(c);
+      if (currentView === 'all_closed') {
+        return ['no', 'unqualified', 'opted_out', 'wrong_number'].includes(bucket);
+      }
+      if (currentView === 'all_hot') {
+        return ['appointment', 'follow_up'].includes(bucket);
+      }
+      return bucket === currentView;
+    });
 
   // Appointments and follow-ups read as a schedule: soonest first
   if (SCHEDULED_VIEWS.includes(currentView)) {
@@ -1235,6 +1266,8 @@ function updateTabCounts() {
     if (bucket in counts) counts[bucket]++;
   });
   counts['storm-demo'] = searchStormDemoLeads().length;
+  counts['all_closed'] = (counts['no'] || 0) + (counts['unqualified'] || 0) + (counts['opted_out'] || 0) + (counts['wrong_number'] || 0);
+  counts['all_hot'] = (counts['appointment'] || 0) + (counts['follow_up'] || 0);
 
   // Sub-tab counts
   Object.entries(counts).forEach(([view, value]) => {
@@ -1244,11 +1277,13 @@ function updateTabCounts() {
     el.classList.toggle('is-zero', value === 0);
   });
 
-  // Folder counts are the sum of their views
+  // Folder counts are the sum of their views (excluding synthetic 'all_*' views)
   Object.entries(FOLDERS).forEach(([folder, config]) => {
     const el = document.getElementById(`count-folder-${folder}`);
     if (!el) return;
-    const total = config.views.reduce((sum, v) => sum + (counts[v] || 0), 0);
+    const total = config.views
+      .filter(v => !v.startsWith('all_'))
+      .reduce((sum, v) => sum + (counts[v] || 0), 0);
     el.textContent = total;
     el.classList.toggle('is-zero', total === 0);
   });
@@ -1457,11 +1492,10 @@ function filterConversations() {
 // "Aug 5, 2:00 PM" — used for appointment/follow-up times
 function formatScheduleTimestamp(dateInput) {
   if (!dateInput) return '';
-  // Server timestamps are UTC; parseUtc converts, then toLocaleString renders
-  // in the viewer's own timezone.
-  const date = dateInput instanceof Date ? dateInput : parseUtc(dateInput);
+  const date = dateInput instanceof Date ? dateInput : parseUtc(dateInput) || new Date(dateInput);
   if (!date || isNaN(date.getTime())) return '';
-  return date.toLocaleString([], {
+  return date.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
 }
@@ -1761,7 +1795,11 @@ async function selectConversation(conv) {
   const initials = conv.name ? conv.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() : '#';
   activeAvatar.textContent = initials;
   activeContactName.textContent = conv.name || conv.phone_number;
-  activeContactPhone.textContent = conv.name ? conv.phone_number : 'SMS Contact';
+
+  const phoneStr = conv.phone_number || '';
+  const stateAbbr = window.AreaCodes ? window.AreaCodes.getStateFromPhone(phoneStr) : null;
+  const stateBadgeHtml = stateAbbr ? `<span class="prospect-state-badge" title="State for area code ${window.AreaCodes.extractAreaCode(phoneStr)}">${stateAbbr}</span>` : '';
+  activeContactPhone.innerHTML = `${escapeHTML(phoneStr)} ${stateBadgeHtml}`;
   
   // Show the composer only when the contact may actually be messaged.
   // updateSuppressionNotice hides it, and this used to override that.
@@ -1769,6 +1807,9 @@ async function selectConversation(conv) {
   btnDeleteChat.style.display = 'block';
   updateCharCounter(messageInput, chatCharCounter);
   
+  // Load notes for active prospect
+  loadNotesForActiveConversation();
+
   // Load messages
   messagesFeed.innerHTML = `<div class="feed-placeholder">Loading message history...</div>`;
   
@@ -3018,37 +3059,46 @@ function updateCharCounter(textarea, counterEl) {
   }
 }
 
-// Phase 6: Helper to convert ISO/SQLite datetime string to local YYYY-MM-DD string
+// Helper to convert ISO/SQLite datetime string to EST YYYY-MM-DD string
 function getLocalDateString(dateStr) {
   if (!dateStr) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-  
-  const parts = dateStr.split(' ');
-  if (parts[0] && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
-    return parts[0];
-  }
-  
+  const date = parseUtc(dateStr) || new Date(dateStr.includes('T') || dateStr.includes(' ') ? dateStr.replace(' ', 'T') : dateStr);
+  if (!date || isNaN(date.getTime())) return null;
   try {
-    const date = new Date(dateStr);
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+    return formatter.format(date);
   } catch (e) {
     return null;
   }
 }
 
-// Phase 8: Helper to format message timestamp to date and time (e.g. Jun 8, 12:45 PM)
+// Helper to format message timestamp to date and time in EST (e.g. Jun 8, 12:45 PM)
 function formatMessageTimestamp(dateInput) {
   if (!dateInput) return '';
-  const date = new Date(dateInput);
-  return date.toLocaleString([], { 
+  const date = dateInput instanceof Date ? dateInput : parseUtc(dateInput) || new Date(dateInput);
+  if (!date || isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', { 
+    timeZone: 'America/New_York',
     month: 'short', 
     day: 'numeric', 
-    hour: '2-digit', 
+    hour: 'numeric', 
     minute: '2-digit' 
   });
+}
+
+// Helper to format note timestamp in EST (e.g. Aug 3, 2026, 10:03 PM EST)
+function formatNoteTimestamp(dateInput) {
+  if (!dateInput) return '';
+  const date = dateInput instanceof Date ? dateInput : parseUtc(dateInput) || new Date(dateInput);
+  if (!date || isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }) + ' EST';
 }
 
 // Selection & Bulk Action Helpers
@@ -3276,5 +3326,119 @@ function renderStormLeadsTable() {
 
 function updateStormLeadsBadge() {
   updateTabCounts();
+}
+
+/* ------------------------------------------------------------------
+ * Prospect Notes Helper Functions
+ * ------------------------------------------------------------------ */
+let activeNotes = [];
+
+async function loadNotesForActiveConversation() {
+  const btnToggleNotes = document.getElementById('btn-toggle-notes');
+  if (!btnToggleNotes) return;
+
+  if (!activeConversation || activeConversation.isLead) {
+    btnToggleNotes.style.display = 'none';
+    closeNotesDrawer();
+    return;
+  }
+
+  btnToggleNotes.style.display = 'inline-flex';
+
+  try {
+    const res = await fetch(`/api/conversations/${activeConversation.id}/notes`);
+    if (!res.ok) throw new Error("Failed to load notes");
+    activeNotes = await res.json();
+    renderNotesFeed();
+  } catch (err) {
+    console.error("Error loading notes:", err);
+  }
+}
+
+function renderNotesFeed() {
+  const badgeCount = document.getElementById('notes-badge-count');
+  const metaEl = document.getElementById('notes-prospect-meta');
+  const feedEl = document.getElementById('notes-feed');
+
+  if (badgeCount) {
+    badgeCount.textContent = activeNotes.length;
+    badgeCount.style.display = activeNotes.length > 0 ? 'inline-block' : 'none';
+  }
+
+  if (metaEl && activeConversation) {
+    const nameStr = activeConversation.name || 'Unnamed Prospect';
+    const phoneStr = activeConversation.phone_number || '';
+    const state = window.AreaCodes ? window.AreaCodes.getStateFromPhone(phoneStr) : null;
+    metaEl.innerHTML = `<strong>${escapeHTML(nameStr)}</strong> (${escapeHTML(phoneStr)}${state ? ` · ${state}` : ''})`;
+  }
+
+  if (!feedEl) return;
+
+  if (activeNotes.length === 0) {
+    feedEl.innerHTML = '<div class="notes-empty">No notes recorded for this prospect yet.</div>';
+    return;
+  }
+
+  feedEl.innerHTML = activeNotes.map(n => {
+    const formattedTime = formatNoteTimestamp(n.created_at);
+    return `
+      <div class="note-item" data-note-id="${n.id}">
+        <div class="note-item-header">
+          <span class="note-item-timestamp">${escapeHTML(formattedTime)}</span>
+          <button type="button" class="note-delete-btn" onclick="deleteNoteItem(${n.id})" title="Delete note">&times;</button>
+        </div>
+        <div class="note-item-text">${escapeHTML(n.note_text)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function addNoteForActiveConversation(noteText) {
+  if (!activeConversation || !noteText.trim()) return;
+  try {
+    const res = await fetch(`/api/conversations/${activeConversation.id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        note_text: noteText.trim(),
+        phone_number: activeConversation.phone_number
+      })
+    });
+    if (!res.ok) throw new Error("Failed to add note");
+    const newNote = await res.json();
+    activeNotes.unshift(newNote);
+    renderNotesFeed();
+  } catch (err) {
+    console.error("Error saving note:", err);
+    alert("Failed to save note: " + err.message);
+  }
+}
+
+async function deleteNoteItem(noteId) {
+  if (!confirm("Are you sure you want to delete this note?")) return;
+  try {
+    const res = await fetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error("Failed to delete note");
+    activeNotes = activeNotes.filter(n => n.id !== noteId);
+    renderNotesFeed();
+  } catch (err) {
+    console.error("Error deleting note:", err);
+  }
+}
+
+function toggleNotesDrawer() {
+  const drawer = document.getElementById('notes-drawer');
+  if (!drawer) return;
+  if (drawer.style.display === 'none' || !drawer.style.display) {
+    drawer.style.display = 'flex';
+    renderNotesFeed();
+  } else {
+    drawer.style.display = 'none';
+  }
+}
+
+function closeNotesDrawer() {
+  const drawer = document.getElementById('notes-drawer');
+  if (drawer) drawer.style.display = 'none';
 }
 

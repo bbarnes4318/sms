@@ -87,6 +87,10 @@
 
         <!-- Sub-tabs, shown only for folders that have them -->
         <div class="subtab-row" id="subtab-row" style="display: none;">
+          <button type="button" class="subtab" data-parent="hot" data-view="all_hot">
+            <span>All</span>
+            <span class="subtab-count" id="count-all_hot">0</span>
+          </button>
           <button type="button" class="subtab" data-parent="hot" data-view="appointment">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
             <span>Appointments</span>
@@ -96,6 +100,10 @@
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>
             <span>Follow-Ups</span>
             <span class="subtab-count" id="count-follow_up">0</span>
+          </button>
+          <button type="button" class="subtab" data-parent="closed" data-view="all_closed">
+            <span>All</span>
+            <span class="subtab-count" id="count-all_closed">0</span>
           </button>
           <button type="button" class="subtab" data-parent="closed" data-view="no">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -201,6 +209,11 @@
         </div>
         <div class="chat-actions">
           <span class="status-indicator online" id="ws-status">WS Connecting</span>
+          <button type="button" id="btn-toggle-notes" class="btn-notes" title="Toggle Prospect Notes" style="display: none;">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span>Notes</span>
+            <span class="notes-count-badge" id="notes-badge-count" style="display: none;">0</span>
+          </button>
           <button type="button" id="btn-delete-chat" class="btn-delete-chat" title="Delete Conversation Thread" style="display: none;">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="delete-svg"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
           </button>
@@ -285,6 +298,32 @@
           </button>
         </form>
       </footer>
+
+      <!-- Notes Drawer / Side Panel -->
+      <aside class="notes-drawer" id="notes-drawer" style="display: none;">
+        <div class="notes-drawer-header">
+          <div class="notes-drawer-title">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <h3>Prospect Notes</h3>
+          </div>
+          <button type="button" class="notes-close-btn" id="btn-close-notes" title="Close Notes">&times;</button>
+        </div>
+        <div class="notes-drawer-body">
+          <div class="notes-prospect-meta" id="notes-prospect-meta"></div>
+          <form id="notes-add-form" class="notes-add-form">
+            <textarea id="note-input" placeholder="Type a note here..." rows="3" required></textarea>
+            <div class="notes-form-actions">
+              <button type="submit" class="btn-primary btn-sm" id="btn-save-note">Add Note</button>
+            </div>
+          </form>
+          <div class="notes-feed-container">
+            <div class="notes-feed-header">Note History (EST)</div>
+            <div class="notes-feed" id="notes-feed">
+              <div class="notes-empty">No notes recorded yet.</div>
+            </div>
+          </div>
+        </div>
+      </aside>
 
       <!-- Storm Leads View -->
       <section id="storm-leads-view" class="storm-leads-view" style="display: none;">
@@ -773,6 +812,7 @@
   <!-- Main JavaScript -->
   <!-- Canonical reply classification, shared verbatim with the server. Must load first. -->
   <script src="lib/classification.js?v=suppression-1"></script>
+  <script src="lib/area_codes.js"></script>
   <script src="app.js?v=suppression-1"></script>
 </body>
 </html>

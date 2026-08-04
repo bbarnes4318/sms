@@ -94,10 +94,22 @@ function initDatabase() {
     )
   `).run();
 
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL,
+      phone_number TEXT,
+      note_text TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    )
+  `).run();
+
   // Create indexes
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone_number)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_notes_conversation ON notes(conversation_id)`).run();
 
   // Insert default settings if they don't exist
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
@@ -1571,6 +1583,27 @@ function validateSession(token) {
 
 function deleteSession(token) {
   return db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+}
+
+function getNotesForConversation(conversationId) {
+  return db.prepare(`
+    SELECT * FROM notes 
+    WHERE conversation_id = ? 
+    ORDER BY created_at DESC, id DESC
+  `).all(conversationId);
+}
+
+function addNoteForConversation(conversationId, noteText, phoneNumber = null) {
+  const stmt = db.prepare(`
+    INSERT INTO notes (conversation_id, phone_number, note_text, created_at)
+    VALUES (?, ?, ?, datetime('now'))
+  `);
+  const result = stmt.run(conversationId, phoneNumber, noteText ? noteText.trim() : '');
+  return db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function deleteNote(noteId) {
+  return db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
 }
 
 module.exports = {

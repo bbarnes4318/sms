@@ -429,6 +429,52 @@ app.post('/api/conversations/:id/opt-in', (req, res) => {
   }
 });
 
+// Notes API
+app.get('/api/conversations/:id/notes', (req, res) => {
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+  try {
+    const notes = db.getNotesForConversation(convId);
+    res.json(notes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/conversations/:id/notes', (req, res) => {
+  const convId = parseConversationId(req.params.id);
+  if (convId === null) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+  const { note_text, phone_number } = req.body;
+  if (!note_text || typeof note_text !== 'string' || !note_text.trim()) {
+    return res.status(400).json({ error: 'Note text is required' });
+  }
+  try {
+    const newNote = db.addNoteForConversation(convId, note_text, phone_number || null);
+    broadcast('note_created', { conversation_id: convId, note: newNote });
+    res.json(newNote);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/notes/:noteId', (req, res) => {
+  const noteId = parseInt(req.params.noteId, 10);
+  if (isNaN(noteId)) {
+    return res.status(400).json({ error: 'Invalid note id' });
+  }
+  try {
+    db.deleteNote(noteId);
+    broadcast('note_deleted', { note_id: noteId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 3.6c. Manually suppress a contact.
 app.post('/api/conversations/:id/opt-out', (req, res) => {
   const convId = parseConversationId(req.params.id);
