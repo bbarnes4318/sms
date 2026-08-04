@@ -3591,12 +3591,45 @@ body {
   background: #2563eb;
   color: #ffffff;
   border: 1px solid #3b82f6;
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
   letter-spacing: 0.5px;
-  padding: 2px 8px;
-  border-radius: 5px;
+  padding: 1px 6px;
+  border-radius: 4px;
   margin-left: 6px;
   box-shadow: 0 1px 4px rgba(37, 99, 235, 0.4);
   vertical-align: middle;
 }
+
+/* Sidebar State Abbreviation Badge: Small & Perfectly Aligned */
+.conv-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.sidebar-state-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #2563eb !important;
+  color: #ffffff !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  padding: 1px 4px !important;
+  border-radius: 3px !important;
+  min-width: 22px !important;
+  height: 16px !important;
+  line-height: 1 !important;
+  letter-spacing: 0.5px !important;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3) !important;
+  vertical-align: middle !important;
+}
+
+/* When Notes drawer is open, strictly hide the floating reminder alert box */
+body.notes-open #reminder-banner {
+  display: none !important;
+}
+

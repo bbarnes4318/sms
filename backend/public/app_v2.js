@@ -1454,15 +1454,18 @@ function renderConversations() {
         <span class="checkbox-custom"></span>
       </label>`;
 
-    const stateBadge = renderStateBadge(c.phone_number);
+    const stateBadge = renderStateBadge(c.phone_number, true);
 
     item.innerHTML = `
       ${checkboxHtml}
       <div class="avatar">${initials}</div>
       <div class="conv-details">
         <div class="conv-meta">
-          <span class="conv-name">${escapeHTML(displayName)}${repliedDot}</span>${stateBadge}
-          <span class="conv-time">${timeStr}</span>
+          <span class="conv-name">${escapeHTML(displayName)}${repliedDot}</span>
+          <div class="conv-meta-right">
+            ${stateBadge}
+            <span class="conv-time">${timeStr}</span>
+          </div>
         </div>
         <div class="conv-preview${overdueClass}">${previewIcon}<span class="conv-preview-text">${escapeHTML(preview)}</span>${stageChip}</div>
       </div>
@@ -1751,10 +1754,13 @@ function getStateFromPhoneInline(phone) {
   return code ? (AREA_CODE_MAP_INLINE[code] || null) : null;
 }
 
-function renderStateBadge(phone) {
+function renderStateBadge(phone, isSidebar = false) {
   if (!phone) return '';
   const state = getStateFromPhoneInline(phone) || (window.AreaCodes ? window.AreaCodes.getStateFromPhone(phone) : null);
   if (!state) return '';
+  if (isSidebar) {
+    return `<span class="prospect-state-badge sidebar-state-badge" title="State for area code ${window.AreaCodes ? window.AreaCodes.extractAreaCode(phone) : ''}">${escapeHTML(state)}</span>`;
+  }
   return `<span class="prospect-state-badge" style="display: inline-flex !important; align-items: center !important; justify-content: center !important; background: #2563eb !important; color: #ffffff !important; font-size: 11px !important; font-weight: 700 !important; padding: 1px 6px !important; border-radius: 4px !important; margin-left: 6px !important; vertical-align: middle !important; letter-spacing: 0.5px !important;" title="State for area code">${escapeHTML(state)}</span>`;
 }
 
@@ -2335,9 +2341,12 @@ function renderReminderBanner(due) {
   const banner = document.getElementById('reminder-banner');
   const list = document.getElementById('reminder-list');
   const count = document.getElementById('reminder-count');
+  const drawer = document.getElementById('notes-drawer');
   if (!banner || !list) return;
 
-  if (!due.length) {
+  const isNotesOpen = (drawer && drawer.style.display !== 'none') || document.body.classList.contains('notes-open');
+
+  if (!due.length || isNotesOpen) {
     banner.style.display = 'none';
     return;
   }
@@ -3511,18 +3520,25 @@ async function deleteNoteItem(noteId) {
 
 function toggleNotesDrawer() {
   const drawer = document.getElementById('notes-drawer');
+  const banner = document.getElementById('reminder-banner');
   if (!drawer) return;
   if (drawer.style.display === 'none' || !drawer.style.display) {
     drawer.style.display = 'flex';
+    document.body.classList.add('notes-open');
+    if (banner) banner.style.display = 'none';
     renderNotesFeed();
   } else {
     drawer.style.display = 'none';
+    document.body.classList.remove('notes-open');
+    if (typeof checkReminders === 'function') checkReminders();
   }
 }
 
 function closeNotesDrawer() {
   const drawer = document.getElementById('notes-drawer');
   if (drawer) drawer.style.display = 'none';
+  document.body.classList.remove('notes-open');
+  if (typeof checkReminders === 'function') checkReminders();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
