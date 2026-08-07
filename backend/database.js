@@ -116,7 +116,53 @@ function initDatabase() {
   insertSetting.run('bulkvs_username', 'jimmy@getlifeassurance.com');
   insertSetting.run('bulkvs_token', '50e77367256f3bd823f44d13dc1e8d17');
   insertSetting.run('sender_number', '+18887885527');
-  insertSetting.run('send_interval_ms', '2000'); // 2 seconds between sends
+  insertSetting.run('send_interval_ms', '2000'); // legacy global metronome; superseded by did_min_gap_ms
+
+  // Pacing. The old model was one global 2s interval shared by every DID, which
+  // is both a bot-obvious cadence and a waste of a six-number pool. These
+  // defaults pace each number independently. See pacing.js.
+  insertSetting.run('pacing_enabled', '1');
+  insertSetting.run('did_min_gap_ms', '12000');       // per number, not global
+  insertSetting.run('did_jitter_pct', '0.4');         // +/-40% so the cadence is irregular
+  insertSetting.run('did_daily_cap', '300');          // per number, per day
+  insertSetting.run('did_warmup_enabled', '1');       // ramp new numbers up
+  insertSetting.run('did_failure_threshold', '0.5');
+  insertSetting.run('did_failure_min_samples', '8');
+  insertSetting.run('did_failure_pause_ms', '900000'); // 15m cooloff on a failure spike
+  insertSetting.run('max_concurrent_sends', '3');
+
+  // Quiet hours, in the RECIPIENT's local time (inferred from area code).
+  // 9:00-20:00 is deliberately narrower than the 8:00-21:00 TCPA window: area
+  // code to timezone inference can be off by one hour for numbers in states
+  // that straddle a boundary, and the margin absorbs that error.
+  insertSetting.run('quiet_hours_enabled', '1');
+  insertSetting.run('quiet_start_hour', '9');
+  insertSetting.run('quiet_end_hour', '20');
+
+  // Per-recipient message variation. Off until an API key is set, so the
+  // system behaves exactly as before on an untouched install.
+  insertSetting.run('variation_enabled', '0');
+  insertSetting.run('anthropic_api_key', '');
+  insertSetting.run('variation_model', 'claude-opus-5');
+  insertSetting.run('variation_batch_size', '20');
+  // Distinct rewrites generated per campaign. Recipients draw from this pool
+  // round-robin, and merge fields vary on top, so 25 templates over thousands
+  // of contacts leaves no repeated body for a content filter to hash.
+  insertSetting.run('variation_pool_size', '25');
+
+  // Let ANTHROPIC_API_KEY in the environment fill an empty setting on any
+  // startup, not just the very first one. INSERT OR IGNORE above cannot do
+  // this: once the row exists (even empty) it is never touched again, so a key
+  // added to .env after the first boot would silently never take effect.
+  // A key already saved through the UI always wins - this only fills a blank.
+  const envKey = (process.env.ANTHROPIC_API_KEY || '').trim();
+  if (envKey) {
+    const current = db.prepare("SELECT value FROM settings WHERE key = 'anthropic_api_key'").get();
+    if (!current || !current.value) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'anthropic_api_key'").run(envKey);
+      console.log('Anthropic API key loaded from the environment.');
+    }
+  }
   insertSetting.run('fractel_username', '');
   insertSetting.run('fractel_password', '');
   insertSetting.run('fractel_sender_number', '8653456051');
@@ -230,7 +276,15 @@ function initDatabase() {
   const messageInfo = db.prepare("PRAGMA table_info(messages)").all();
   const messageColumns = [
     ['delivered_at', "ALTER TABLE messages ADD COLUMN delivered_at TEXT"],
-    ['carrier_status', "ALTER TABLE messages ADD COLUMN carrier_status TEXT"]
+    ['carrier_status', "ALTER TABLE messages ADD COLUMN carrier_status TEXT"],
+    // Message variation audit trail. body always holds what was actually sent;
+    // original_body holds the merged template it was rewritten from, so a
+    // regulator (or an operator) can see both halves of every send.
+    ['original_body', "ALTER TABLE messages ADD COLUMN original_body TEXT"],
+    // 'llm' = a validated rewrite went out. 'template' = the merged template
+    // went out unchanged, either because variation is off or because the
+    // rewrite was rejected. NULL on pre-existing rows.
+    ['variation_source', "ALTER TABLE messages ADD COLUMN variation_source TEXT"]
   ];
   messageColumns.forEach(([name, sql]) => {
     if (!messageInfo.some(column => column.name === name)) {
@@ -240,6 +294,9 @@ function initDatabase() {
   });
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)`).run();
+  // Per-DID pacing reads send history by sending number; without this the
+  // daily-cap and warm-up lookups full-scan the messages table on every start.
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_messages_from_status ON messages(from_number, status)`).run();
 
   // Audit log for suppression decisions and blocked sends.
   db.prepare(`
@@ -722,6 +779,168 @@ function getNextQueuedMessage() {
 }
 
 /**
+ * A window of due messages for the pacing layer to choose from.
+ *
+ * The old worker took the single oldest queued message and slept a fixed
+ * interval. That serialises the whole pool behind one number. Handing the
+ * worker a window instead lets it skip a message whose DID is rate limited or
+ * whose recipient is asleep, and send one that is eligible right now.
+ *
+ * Ordered oldest-first, so the queue still drains in FIFO order within each DID.
+ */
+/**
+ * Substitute the merge fields a template may reference.
+ * Shared by the import and campaign paths so both behave identically.
+ */
+function mergePlaceholders(template, contact) {
+  const c = contact || {};
+  return String(template == null ? '' : template)
+    .replace(/\[Name\]/gi, c.name || '')
+    .replace(/\[City\]/gi, c.city || '')
+    .replace(/\[Zip(?:\s*Code)?\]/gi, c.zip || '');
+}
+
+/**
+ * The widest merge values a campaign will actually substitute.
+ *
+ * A template cannot be measured for length directly: "[Name]" is six characters
+ * but becomes "Christopher" or "Jo". To know what a message really costs, the
+ * placeholders have to be filled at the widest values in the contact list.
+ *
+ * The 95th percentile is used rather than the absolute maximum: a single
+ * pathological row (a whole address pasted into the name field) would otherwise
+ * make every template look like it needs an extra segment.
+ */
+function getPlaceholderWidths(conversationIds = null) {
+  const percentile = (column, ids) => {
+    const scope = ids && ids.length
+      ? `AND id IN (${ids.map(() => '?').join(',')})`
+      : '';
+    const rows = db.prepare(`
+      SELECT length(${column}) AS len
+      FROM conversations
+      WHERE ${column} IS NOT NULL AND ${column} <> '' ${scope}
+      ORDER BY len ASC
+    `).all(...(ids && ids.length ? ids : []));
+    if (!rows.length) return null;
+    return rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.95))].len;
+  };
+
+  // A large explicit recipient list would blow past SQLite's variable limit,
+  // so scope only when it is small enough to bind safely.
+  const ids = Array.isArray(conversationIds) && conversationIds.length <= 500
+    ? conversationIds
+    : null;
+
+  return {
+    name: percentile('name', ids) || DEFAULT_MERGE_WIDTHS.name,
+    city: percentile('city', ids) || DEFAULT_MERGE_WIDTHS.city,
+    zip: percentile('zip', ids) || DEFAULT_MERGE_WIDTHS.zip
+  };
+}
+
+const DEFAULT_MERGE_WIDTHS = { name: 14, city: 14, zip: 5 };
+
+/**
+ * Pick this recipient's template from a variant pool.
+ *
+ * Variants are generated from the template with its placeholders intact, then
+ * merged per recipient. That way one small pool (a couple of LLM calls) covers
+ * a whole campaign, and because the merge fields differ per contact the actual
+ * bodies that go out are close to unique anyway.
+ *
+ * Index 0 is always the original approved template, so a pool of size 1 is the
+ * old behaviour exactly.
+ */
+function pickVariant(pool, index) {
+  if (!Array.isArray(pool) || pool.length === 0) return { text: null, source: 'template' };
+  const slot = index % pool.length;
+  return { text: pool[slot], source: slot === 0 ? 'template' : 'llm' };
+}
+
+function getDueQueuedMessages(limit = 200) {
+  return db.prepare(`
+    SELECT * FROM messages
+    WHERE status = 'queued'
+    AND direction = 'outbound'
+    AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
+    ORDER BY created_at ASC, id ASC
+    LIMIT ?
+  `).all(limit);
+}
+
+/**
+ * Surface messages left in 'sending' by a crash or restart.
+ *
+ * 'sending' is written just before the carrier call and overwritten by the
+ * result, so a row still in that state at startup belongs to a process that
+ * died mid-send. It is not safe to re-queue: the carrier may well have accepted
+ * it, and re-sending would double-text the contact. It is also not safe to
+ * ignore, because the row sits invisible forever and the concurrency this
+ * worker now uses makes several at once possible.
+ *
+ * So they are failed with an explicit message and left for a human to judge
+ * against the carrier's own logs.
+ */
+function failStaleSendingMessages(olderThanMinutes = 15) {
+  const result = db.prepare(`
+    UPDATE messages
+    SET status = 'failed',
+        error_message = 'Interrupted mid-send (server restarted). Check the carrier log before resending.'
+    WHERE status = 'sending'
+      AND created_at <= datetime('now', 'localtime', ?)
+  `).run(`-${Math.max(1, olderThanMinutes)} minutes`);
+
+  if (result.changes > 0) {
+    console.warn(`[queue] ${result.changes} message(s) were stuck in 'sending' from a previous run and have been marked failed for review.`);
+  }
+  return result.changes;
+}
+
+/**
+ * Send history per DID, used to seed the in-memory pacing state on start.
+ *
+ * Without this a restart hands every number a fresh daily allowance and forgets
+ * that it is already past its warm-up, which is exactly the volume spike the
+ * warm-up exists to prevent.
+ *
+ * from_number is normalised in JS rather than SQL because the column holds a
+ * mix of 10-digit FracTEL DIDs and the legacy +1-prefixed BulkVS sender.
+ * sent_at is written with datetime('now','localtime'), so date(sent_at) is the
+ * server-local day and matches the pacer's own day boundary.
+ */
+function getDidSendSummary() {
+  const rows = db.prepare(`
+    SELECT
+      from_number,
+      MIN(date(sent_at)) AS first_send_day,
+      SUM(CASE WHEN date(sent_at) = date('now', 'localtime') THEN 1 ELSE 0 END) AS sent_today
+    FROM messages
+    WHERE status = 'sent'
+      AND direction = 'outbound'
+      AND sent_at IS NOT NULL
+    GROUP BY from_number
+  `).all();
+
+  const today = new Date().toLocaleDateString('en-CA');
+  const summary = {};
+  for (const row of rows) {
+    const key = toDidFormat(row.from_number) || String(row.from_number || '').replace(/\D/g, '');
+    if (!key) continue;
+    const existing = summary[key];
+    const firstDay = existing && existing.firstSendDay < row.first_send_day
+      ? existing.firstSendDay
+      : row.first_send_day;
+    summary[key] = {
+      firstSendDay: firstDay,
+      sentToday: (existing ? existing.sentToday : 0) + (row.sent_today || 0),
+      day: today
+    };
+  }
+  return summary;
+}
+
+/**
  * Cancel a queued message whose contact became suppressed after it was queued.
  * Returns the block when the message was cancelled, or null when it may send.
  */
@@ -1035,11 +1254,13 @@ function backfillSuppression({ dryRun = false } = {}) {
   return summary;
 }
 
-function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
+function bulkImportLeads(leads, messageTemplate, fromNumber = null, options = {}) {
+  const variantPool = options.variantPool || null;
   const insertMessageStmt = db.prepare(`
     INSERT INTO messages (
-      conversation_id, direction, from_number, to_number, body, status
-    ) VALUES (?, 'outbound', ?, ?, ?, 'queued')
+      conversation_id, direction, from_number, to_number, body, status,
+      original_body, variation_source
+    ) VALUES (?, 'outbound', ?, ?, ?, 'queued', ?, ?)
   `);
   
   const updateConvStmt = db.prepare(`
@@ -1124,18 +1345,19 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
       db.prepare("UPDATE conversations SET stage = 'Stage 1' WHERE id = ?").run(conv.id);
 
       if (messageTemplate) {
-        // Replace placeholders
-        let body = messageTemplate;
-        const nameVal = lead.name || '';
-        const cityVal = lead.city || '';
-        const zipVal = lead.zip || '';
-        body = body.replace(/\[Name\]/gi, nameVal);
-        body = body.replace(/\[City\]/gi, cityVal);
-        body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
+        // Each recipient draws a template from the variant pool, then the merge
+        // fields are substituted. original_body keeps the approved template
+        // merged for this same contact, so the audit trail shows both halves.
+        const contact = { name: lead.name, city: lead.city, zip: lead.zip };
+        const variant = pickVariant(variantPool, insertedMessages.length);
+        const body = mergePlaceholders(variant.text || messageTemplate, contact);
+        const originalBody = mergePlaceholders(messageTemplate, contact);
 
         const fromNum = resolveSenderNumber(conv.id, fromNumber);
 
-        const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
+        const result = insertMessageStmt.run(
+          conv.id, fromNum, conv.phone_number, body, originalBody, variant.source
+        );
         insertedMessages.push({
           id: result.lastInsertRowid,
           conversation_id: conv.id,
@@ -1143,9 +1365,11 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
           from_number: fromNum,
           to_number: conv.phone_number,
           body: body,
+          original_body: originalBody,
+          variation_source: variant.source,
           status: 'queued'
         });
-        
+
         updateConvStmt.run(body, conv.id);
       }
     }
@@ -1157,11 +1381,13 @@ function bulkImportLeads(leads, messageTemplate, fromNumber = null) {
   return { ...result, messages: insertedMessages, skipped };
 }
 
-function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
+function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null, options = {}) {
+  const variantPool = options.variantPool || null;
   const insertMessageStmt = db.prepare(`
     INSERT INTO messages (
-      conversation_id, direction, from_number, to_number, body, status
-    ) VALUES (?, 'outbound', ?, ?, ?, 'queued')
+      conversation_id, direction, from_number, to_number, body, status,
+      original_body, variation_source
+    ) VALUES (?, 'outbound', ?, ?, ?, 'queued', ?, ?)
   `);
   
   const updateConvStmt = db.prepare(`
@@ -1207,18 +1433,17 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
 
       updateConvStageStmt.run(nextStage, conv.id);
 
-      // Replace placeholders
-      let body = messageTemplate;
-      const nameVal = conv.name || '';
-      const cityVal = conv.city || '';
-      const zipVal = conv.zip || '';
-      body = body.replace(/\[Name\]/gi, nameVal);
-      body = body.replace(/\[City\]/gi, cityVal);
-      body = body.replace(/\[Zip(?:\s*Code)?\]/gi, zipVal);
+      // Each recipient draws a template from the variant pool, then the merge
+      // fields are substituted.
+      const variant = pickVariant(variantPool, insertedMessages.length);
+      const body = mergePlaceholders(variant.text || messageTemplate, conv);
+      const originalBody = mergePlaceholders(messageTemplate, conv);
 
       const fromNum = resolveSenderNumber(conv.id, fromNumber);
 
-      const result = insertMessageStmt.run(conv.id, fromNum, conv.phone_number, body);
+      const result = insertMessageStmt.run(
+        conv.id, fromNum, conv.phone_number, body, originalBody, variant.source
+      );
       insertedMessages.push({
         id: result.lastInsertRowid,
         conversation_id: conv.id,
@@ -1226,9 +1451,11 @@ function sendBulkMessages(conversationIds, messageTemplate, fromNumber = null) {
         from_number: fromNum,
         to_number: conv.phone_number,
         body: body,
+        original_body: originalBody,
+        variation_source: variant.source,
         status: 'queued'
       });
-      
+
       updateConvStmt.run(body, conv.id);
     }
   });
@@ -1653,6 +1880,12 @@ module.exports = {
   insertMessage,
   updateMessageStatus,
   getNextQueuedMessage,
+  getDueQueuedMessages,
+  getDidSendSummary,
+  failStaleSendingMessages,
+  mergePlaceholders,
+  pickVariant,
+  getPlaceholderWidths,
   getQueueStats,
   bulkImportLeads,
   sendBulkMessages,

@@ -149,10 +149,27 @@ const wsStatus = document.getElementById('ws-status');
 const btnDeleteChat = document.getElementById('btn-delete-chat');
 
 // Settings Elements
+// Whether message variation is switched on, so the send buttons can say what
+// they are waiting for. Refreshed whenever settings are loaded.
+let variationIsOn = false;
+
 const settingsForm = document.getElementById('settings-form');
 const settingSender = document.getElementById('setting-sender');
 const settingInterval = document.getElementById('setting-interval');
 const settingIntervalVal = document.getElementById('setting-interval-val');
+// Pacing and variation controls.
+const settingJitter = document.getElementById('setting-jitter');
+const settingJitterVal = document.getElementById('setting-jitter-val');
+const settingDailyCap = document.getElementById('setting-daily-cap');
+const settingWarmup = document.getElementById('setting-warmup');
+const settingQuiet = document.getElementById('setting-quiet');
+const settingQuietStart = document.getElementById('setting-quiet-start');
+const settingQuietEnd = document.getElementById('setting-quiet-end');
+const settingConcurrency = document.getElementById('setting-concurrency');
+const settingVariation = document.getElementById('setting-variation');
+const settingAnthropicKey = document.getElementById('setting-anthropic-key');
+const settingAnthropicKeyState = document.getElementById('setting-anthropic-key-state');
+const settingVariationPool = document.getElementById('setting-variation-pool');
 const settingUsername = document.getElementById('setting-username');
 const settingToken = document.getElementById('setting-token');
 const settingsStatus = document.getElementById('settings-status');
@@ -376,6 +393,12 @@ window.addEventListener('DOMContentLoaded', () => {
     settingIntervalVal.textContent = `${e.target.value} ms`;
   });
 
+  if (settingJitter && settingJitterVal) {
+    settingJitter.addEventListener('input', (e) => {
+      settingJitterVal.textContent = `±${e.target.value}%`;
+    });
+  }
+
   // Settings Save
   settingsForm.addEventListener('submit', handleSaveSettings);
 
@@ -585,6 +608,7 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('bulk-recipients-count').textContent = selectedConversations.size;
     bulkMessageText.value = '';
     updateCharCounter(bulkMessageText, bulkCharCounter);
+    if (bulkMessageText._resetLint) bulkMessageText._resetLint();
     
     // Repopulate from the shared options so rotation stays the default.
     bulkSenderSelect.innerHTML = senderOptionsHtml;
@@ -603,13 +627,19 @@ window.addEventListener('DOMContentLoaded', () => {
     updateCharCounter(this, bulkCharCounter);
   });
 
+  // Live carrier spam-filter risk for the bulk template.
+  attachLinter(bulkMessageText, document.getElementById('bulk-lint'), true);
+
   // Submit Bulk Message Campaign
   bulkMessageForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (selectedConversations.size === 0) return;
 
     btnSubmitBulk.disabled = true;
-    btnSubmitBulk.textContent = 'Sending...';
+    // Generating the rewrite pool takes ~20s and happens before anything is
+    // queued, so say so rather than leaving the button on "Sending..." while
+    // apparently nothing happens.
+    btnSubmitBulk.textContent = variationIsOn ? 'Writing variations...' : 'Sending...';
 
     const text = bulkMessageText.value.trim();
     const fromNum = bulkSenderSelect.value;
@@ -629,7 +659,8 @@ window.addEventListener('DOMContentLoaded', () => {
       if (res.ok) {
         const data = await res.json();
         bulkMessageModal.classList.remove('open');
-        alert(`Success! Queued ${data.queued_count} bulk messages.` + skippedNote(data.skipped_count));
+        alert(`Success! Queued ${data.queued_count} bulk messages.` +
+          skippedNote(data.skipped_count) + variationNote(data.variation));
         
         // Clear selection & reload
         selectedConversations.clear();
@@ -656,6 +687,7 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       campaignMessageText.value = '';
       updateCharCounter(campaignMessageText, campaignCharCounter);
+      if (campaignMessageText._resetLint) campaignMessageText._resetLint();
 
       // Repopulate from the shared options so rotation stays the default.
       campaignBulkSenderSelect.innerHTML = senderOptionsHtml;
@@ -679,6 +711,7 @@ window.addEventListener('DOMContentLoaded', () => {
     campaignMessageText.addEventListener('input', function() {
       updateCharCounter(this, campaignCharCounter);
     });
+    attachLinter(campaignMessageText, document.getElementById('campaign-lint'), true);
   }
 
   // Campaign Form Submission
@@ -693,7 +726,7 @@ window.addEventListener('DOMContentLoaded', () => {
       }
 
       btnSubmitCampaign.disabled = true;
-      btnSubmitCampaign.textContent = 'Sending...';
+      btnSubmitCampaign.textContent = variationIsOn ? 'Writing variations...' : 'Sending...';
 
       const text = campaignMessageText.value.trim();
       const fromNum = campaignBulkSenderSelect.value;
@@ -712,7 +745,8 @@ window.addEventListener('DOMContentLoaded', () => {
         if (res.ok) {
           const data = await res.json();
           campaignModal.classList.remove('open');
-          alert(`Success! Queued ${data.queued_count} campaign messages.` + skippedNote(data.skipped_count));
+          alert(`Success! Queued ${data.queued_count} campaign messages.` +
+            skippedNote(data.skipped_count) + variationNote(data.variation));
           
           // Reload conversations
           await loadConversations();
@@ -959,10 +993,32 @@ async function loadSettings() {
     const settings = await res.json();
     
     settingSender.value = settings.sender_number || '+18887885527';
-    settingInterval.value = settings.send_interval_ms || 2000;
+    // The slider now controls the per-number gap, not the old global interval.
+    settingInterval.value = settings.did_min_gap_ms || 12000;
     settingIntervalVal.textContent = `${settingInterval.value} ms`;
     settingUsername.value = settings.bulkvs_username || '';
     settingToken.value = settings.bulkvs_token || '';
+
+    if (settingJitter) {
+      settingJitter.value = Math.round((Number(settings.did_jitter_pct) || 0.4) * 100);
+      if (settingJitterVal) settingJitterVal.textContent = `±${settingJitter.value}%`;
+    }
+    if (settingDailyCap) settingDailyCap.value = settings.did_daily_cap || 300;
+    if (settingWarmup) settingWarmup.checked = String(settings.did_warmup_enabled) === '1';
+    if (settingQuiet) settingQuiet.checked = String(settings.quiet_hours_enabled) === '1';
+    if (settingQuietStart) settingQuietStart.value = settings.quiet_start_hour || 9;
+    if (settingQuietEnd) settingQuietEnd.value = settings.quiet_end_hour || 20;
+    if (settingConcurrency) settingConcurrency.value = settings.max_concurrent_sends || 3;
+
+    variationIsOn = String(settings.variation_enabled) === '1' && !!settings.anthropic_api_key_set;
+    if (settingVariation) settingVariation.checked = String(settings.variation_enabled) === '1';
+    if (settingVariationPool) settingVariationPool.value = settings.variation_pool_size || 25;
+    if (settingAnthropicKeyState) {
+      // The key itself is never sent to the browser, only whether one exists.
+      settingAnthropicKeyState.textContent = settings.anthropic_api_key_set
+        ? 'A key is saved. Leave blank to keep it, or paste a new one to replace it.'
+        : 'Not set. Variation stays off until a key is saved.';
+    }
 
     if (settingFractelSender) settingFractelSender.value = settings.fractel_sender_number || '2005555185';
     if (settingFractelBrand) settingFractelBrand.value = settings.fractel_brand_id || 'B7PS8UH';
@@ -2173,7 +2229,7 @@ async function handleSaveSettings(e) {
 
   const payload = {
     sender_number: settingSender.value.trim(),
-    send_interval_ms: settingInterval.value,
+    did_min_gap_ms: settingInterval.value,
     bulkvs_username: settingUsername.value.trim(),
     bulkvs_token: settingToken.value.trim(),
     fractel_sender_number: settingFractelSender.value.trim(),
@@ -2181,6 +2237,20 @@ async function handleSaveSettings(e) {
     fractel_username: settingFractelUsername.value.trim(),
     fractel_password: settingFractelPassword.value.trim()
   };
+
+  if (settingJitter) payload.did_jitter_pct = String(Number(settingJitter.value) / 100);
+  if (settingDailyCap) payload.did_daily_cap = settingDailyCap.value;
+  if (settingWarmup) payload.did_warmup_enabled = settingWarmup.checked ? '1' : '0';
+  if (settingQuiet) payload.quiet_hours_enabled = settingQuiet.checked ? '1' : '0';
+  if (settingQuietStart) payload.quiet_start_hour = settingQuietStart.value;
+  if (settingQuietEnd) payload.quiet_end_hour = settingQuietEnd.value;
+  if (settingConcurrency) payload.max_concurrent_sends = settingConcurrency.value;
+  if (settingVariation) payload.variation_enabled = settingVariation.checked ? '1' : '0';
+  if (settingVariationPool) payload.variation_pool_size = settingVariationPool.value;
+  // An empty key field means "keep the saved key"; the server treats it that way.
+  if (settingAnthropicKey && settingAnthropicKey.value.trim()) {
+    payload.anthropic_api_key = settingAnthropicKey.value.trim();
+  }
 
   try {
     const res = await fetch('/api/settings', {
@@ -2193,6 +2263,13 @@ async function handleSaveSettings(e) {
       const updated = await res.json();
       settingsStatus.textContent = 'Settings saved successfully!';
       settingsStatus.className = 'settings-status success';
+
+      // Never leave a pasted key sitting in the DOM after it has been stored.
+      if (settingAnthropicKey) settingAnthropicKey.value = '';
+      if (settingAnthropicKeyState && updated.anthropic_api_key_set) {
+        settingAnthropicKeyState.textContent =
+          'A key is saved. Leave blank to keep it, or paste a new one to replace it.';
+      }
       
       updateSenderDropdowns(updated);
       
@@ -2904,6 +2981,23 @@ function skippedNote(count) {
 ${count} contact${count === 1 ? ' was' : 's were'} skipped: opted out, or marked No / Unqualified / Customer. Open a conversation to message them individually.`;
 }
 
+/**
+ * Report how the campaign was varied.
+ *
+ * A pool of 1 is worth surfacing loudly: it means every recipient got a
+ * byte-identical body, which is the exact fingerprint variation exists to
+ * avoid. Silence there would let a failed rewrite pass for a successful one.
+ */
+function variationNote(v) {
+  if (!v || !v.enabled) return '';
+  if (v.pool_size > 1) {
+    return `\n\nSent as ${v.pool_size} distinct wordings` +
+      (v.rejected ? ` (${v.rejected} rewrite${v.rejected === 1 ? '' : 's'} rejected by the safety checks).` : '.');
+  }
+  return '\n\nWarning: no usable rewrites were produced, so every recipient received the same wording.' +
+    (v.error ? ` Reason: ${v.error}` : '');
+}
+
 // Escaping HTML utility
 function escapeHTML(str) {
   return String(str == null ? '' : str)
@@ -3127,6 +3221,91 @@ function getSmsDetails(text) {
   return { count, limit, segments, isUnicode };
 }
 
+/* ==================================================================
+ * Template risk linter
+ *
+ * Shows carrier spam-filter risk while a template is being written. It is
+ * advisory only and never blocks a send: it is far cheaper to fix a template
+ * here than to discover the problem after 5,000 copies have gone out from a
+ * number whose reputation then has to recover.
+ * ================================================================== */
+
+const LINT_DEBOUNCE_MS = 400;
+
+function renderLintPanel(panel, result) {
+  if (!result || !result.findings.length) {
+    if (!result || !result.measure || result.measure.units === 0) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    panel.innerHTML =
+      '<div class="lint-head"><span class="lint-badge ok">Clear</span>' +
+      '<span class="lint-meta">No carrier spam-filter risks detected.</span></div>';
+    return;
+  }
+
+  const labels = { ok: 'Clear', low: 'Minor', medium: 'Some risk', high: 'High risk' };
+  const items = result.findings.map(f =>
+    `<li><span class="lint-sev ${f.severity}">${f.severity}</span>${escapeHTML(f.message)}` +
+    (f.hint ? `<span class="lint-hint">${escapeHTML(f.hint)}</span>` : '') +
+    '</li>'
+  ).join('');
+
+  panel.hidden = false;
+  panel.innerHTML =
+    `<div class="lint-head"><span class="lint-badge ${result.level}">${labels[result.level]}</span>` +
+    `<span class="lint-meta">${result.measure.segments} segment${result.measure.segments === 1 ? '' : 's'}, ` +
+    `${result.measure.encoding}</span></div><ul>${items}</ul>`;
+}
+
+/**
+ * Debounced live linting for a template textarea. `bulk` controls whether a
+ * missing opt-out disclosure counts as a finding - a one-to-one reply does not
+ * need the disclosure repeated, a first-touch campaign does.
+ */
+function attachLinter(textarea, panel, bulk = true) {
+  if (!textarea || !panel) return;
+  let timer = null;
+  let inFlight = 0;
+
+  const run = async () => {
+    const text = textarea.value;
+    if (!text.trim()) {
+      panel.hidden = true;
+      return;
+    }
+    const ticket = ++inFlight;
+    try {
+      const res = await fetch('/api/messages/lint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, bulk })
+      });
+      if (!res.ok) return;
+      const result = await res.json();
+      // Ignore a response that a later keystroke has already superseded.
+      if (ticket !== inFlight) return;
+      renderLintPanel(panel, result);
+    } catch (err) {
+      // The linter is advisory; a failure here must not disrupt composing.
+      console.error('Lint request failed:', err);
+    }
+  };
+
+  textarea.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(run, LINT_DEBOUNCE_MS);
+  });
+
+  // Exposed so opening a modal can clear a stale result.
+  textarea._resetLint = () => {
+    clearTimeout(timer);
+    inFlight++;
+    panel.hidden = true;
+  };
+}
+
 function updateCharCounter(textarea, counterEl) {
   const text = textarea.value;
   const details = getSmsDetails(text);
@@ -3228,7 +3407,7 @@ function updateGatewayStatusUI(settings) {
   const connFractelStatus = document.getElementById('conn-fractel-status');
 
   if (connBulkvsDid) connBulkvsDid.textContent = settings.sender_number || 'Not Set';
-  if (connBulkvsPace) connBulkvsPace.textContent = `${settings.send_interval_ms || 2000} ms`;
+  if (connBulkvsPace) connBulkvsPace.textContent = `${settings.did_min_gap_ms || 12000} ms / number`;
   if (connFractelDid) connFractelDid.textContent = settings.fractel_sender_number || 'Not Set';
   if (connFractelBrand) connFractelBrand.textContent = settings.fractel_brand_id || 'Not Set';
 

@@ -5,6 +5,8 @@ const path = require('path');
 const dotenv = require('dotenv');
 const db = require('./database');
 const queueWorker = require('./queue');
+const variation = require('./variation');
+const contentLint = require('./content_lint');
 
 // Load environment variables from backend/.env if present
 dotenv.config({ path: path.resolve(__dirname, '.env') });
@@ -658,8 +660,43 @@ app.post('/api/conversations/:id/messages', (req, res) => {
   }
 });
 
+/**
+ * Build the per-campaign variant pool.
+ *
+ * Wrapped so a variation failure can never block a campaign: on any error the
+ * caller gets a single-entry pool holding the original template, which is the
+ * behaviour the system had before variation existed.
+ */
+async function buildVariantPool(template, conversationIds) {
+  try {
+    return await variation.buildPool(template, db.getSettings(), {
+      // Segment checks run against merged text, so they need the real widths
+      // of the names and cities this campaign will substitute.
+      placeholderWidths: db.getPlaceholderWidths(conversationIds)
+    });
+  } catch (err) {
+    console.error('[variation] pool generation failed, sending template unchanged:', err.message);
+    return { pool: [template], enabled: false, stats: null, error: err.message };
+  }
+}
+
+/** What the UI needs to know about how a campaign was varied. */
+function summarizeVariation(variants) {
+  if (!variants || !variants.pool) return { enabled: false, pool_size: 0 };
+  return {
+    enabled: !!variants.enabled,
+    pool_size: variants.pool.length,
+    // Present but 1 means variation ran and produced nothing usable, which is
+    // worth surfacing: the campaign went out on a single body.
+    accepted: variants.stats ? variants.stats.accepted : 0,
+    rejected: variants.stats ? variants.stats.rejected : 0,
+    rejections: variants.stats ? variants.stats.rejections : {},
+    error: variants.error || (variants.stats ? variants.stats.error : null)
+  };
+}
+
 // 4.5. Bulk Upload Leads & Campaign Sending
-app.post('/api/leads/upload', (req, res) => {
+app.post('/api/leads/upload', async (req, res) => {
   const { leads, message_template, from_number } = req.body;
   if (!leads || !Array.isArray(leads)) {
     return res.status(400).json({ error: 'Leads array is required' });
@@ -672,8 +709,14 @@ app.post('/api/leads/upload', (req, res) => {
   }
 
   try {
-    const result = db.bulkImportLeads(leads, message_template || null, from_number || null);
-    
+    const variants = message_template
+      ? await buildVariantPool(message_template)
+      : { pool: null, enabled: false, stats: null };
+
+    const result = db.bulkImportLeads(leads, message_template || null, from_number || null, {
+      variantPool: variants.pool
+    });
+
     // Broadcast new messages via WebSockets if any
     if (result.messages.length > 0) {
       result.messages.forEach(msg => {
@@ -690,14 +733,14 @@ app.post('/api/leads/upload', (req, res) => {
     // rest are the audited counts. imported_count is deliberately gone —
     // it used to include contacts that were then skipped.
     const { messages, skipped, ...counts } = result;
-    res.json({ success: true, ...counts, skipped });
+    res.json({ success: true, ...counts, skipped, variation: summarizeVariation(variants) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // 4.6. Send Bulk Message to Selected Conversations
-app.post('/api/conversations/bulk-message', (req, res) => {
+app.post('/api/conversations/bulk-message', async (req, res) => {
   const { conversation_ids, message_text, from_number } = req.body;
   if (!conversation_ids || !Array.isArray(conversation_ids)) {
     return res.status(400).json({ error: 'conversation_ids array is required' });
@@ -713,8 +756,11 @@ app.post('/api/conversations/bulk-message', (req, res) => {
   }
 
   try {
-    const { messages, skipped } = db.sendBulkMessages(conversation_ids, message_text, from_number || null);
-    
+    const variants = await buildVariantPool(message_text, conversation_ids);
+    const { messages, skipped } = db.sendBulkMessages(
+      conversation_ids, message_text, from_number || null, { variantPool: variants.pool }
+    );
+
     // Broadcast new messages via WebSockets if any
     if (messages.length > 0) {
       messages.forEach(msg => {
@@ -734,7 +780,8 @@ app.post('/api/conversations/bulk-message', (req, res) => {
       skipped_opted_out: skipped.filter(s => s.reason === 'opted_out').length,
       skipped_wrong_number: skipped.filter(s => s.reason === 'wrong_number').length,
       skipped_disposition: skipped.filter(s => String(s.reason).startsWith('disposition_')).length,
-      skipped: skipped
+      skipped: skipped,
+      variation: summarizeVariation(variants)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -742,7 +789,7 @@ app.post('/api/conversations/bulk-message', (req, res) => {
 });
 
 // 4.7. Send Bulk Message to Specific Stages (Campaigns)
-app.post('/api/campaigns', (req, res) => {
+app.post('/api/campaigns', async (req, res) => {
   const { stages, message_text, from_number } = req.body;
   if (!stages || !Array.isArray(stages) || stages.length === 0) {
     return res.status(400).json({ error: 'stages array is required' });
@@ -767,8 +814,11 @@ app.post('/api/campaigns', (req, res) => {
       });
     }
 
-    const { messages, skipped } = db.sendBulkMessages(conversationIds, message_text, from_number || null);
-    
+    const variants = await buildVariantPool(message_text, conversationIds);
+    const { messages, skipped } = db.sendBulkMessages(
+      conversationIds, message_text, from_number || null, { variantPool: variants.pool }
+    );
+
     // Broadcast new messages via WebSockets if any
     if (messages.length > 0) {
       messages.forEach(msg => {
@@ -788,10 +838,39 @@ app.post('/api/campaigns', (req, res) => {
       skipped_opted_out: skipped.filter(s => s.reason === 'opted_out').length,
       skipped_wrong_number: skipped.filter(s => s.reason === 'wrong_number').length,
       skipped_disposition: skipped.filter(s => String(s.reason).startsWith('disposition_')).length,
-      skipped: skipped
+      skipped: skipped,
+      variation: summarizeVariation(variants)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 4.8. Score a template for carrier spam-filter risk before queueing it.
+//
+// Content is not the biggest lever in 10DLC filtering - per-number volume and
+// opt-out rate matter more - but it is the one that is free to fix, and it is
+// far cheaper to catch a bad template here than after 5,000 copies have gone
+// out from a number whose reputation then has to recover.
+app.post('/api/messages/lint', (req, res) => {
+  const { text, bulk } = req.body || {};
+  if (typeof text !== 'string') {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} characters` });
+  }
+  try {
+    const settings = db.getSettings();
+    const result = contentLint.lint(text, {
+      // One-to-one replies do not need the disclosure repeated; a bulk or
+      // first-touch send does.
+      requireOptOut: bulk !== false,
+      brandTerms: (settings.brand_terms || '').split(',').map(s => s.trim()).filter(Boolean)
+    });
+    res.json(result);
+  } catch (err) {
+    fail(res, 500, 'Could not lint message', err);
   }
 });
 
@@ -799,7 +878,12 @@ app.post('/api/campaigns', (req, res) => {
 app.get('/api/settings', (req, res) => {
   try {
     const settings = db.getSettings();
-    res.json(settings);
+    // The Anthropic key is never echoed back. The UI needs to know whether one
+    // is set, not what it is. (The carrier credentials in this response predate
+    // this change and are left as-is rather than silently breaking the settings
+    // form that reads them.)
+    const { anthropic_api_key, ...rest } = settings;
+    res.json({ ...rest, anthropic_api_key_set: !!anthropic_api_key });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -880,8 +964,23 @@ async function configureFractelWebhook(settings, hostUrl) {
 // 6. Update settings
 app.post('/api/settings', async (req, res) => {
   try {
-    const updated = db.updateSettings(req.body);
-    
+    const incoming = { ...req.body };
+
+    // The GET response never contains the key, so a settings form round-trip
+    // sends back an empty string. Treat that as "leave it alone" rather than
+    // "delete it" - otherwise saving any unrelated setting disables variation.
+    if ('anthropic_api_key' in incoming && !String(incoming.anthropic_api_key).trim()) {
+      delete incoming.anthropic_api_key;
+    }
+    delete incoming.anthropic_api_key_set;
+
+    const updated = db.updateSettings(incoming);
+
+    // Pacing settings are cached in the worker; drop the cache so a change to
+    // the gap, cap, or quiet hours takes effect on the next send rather than
+    // after a restart.
+    queueWorker.refreshConfig();
+
     // Determine the host URL dynamically
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.headers.host;
@@ -894,7 +993,8 @@ app.post('/api/settings', async (req, res) => {
     });
     */
 
-    res.json(updated);
+    const { anthropic_api_key, ...safe } = updated;
+    res.json({ ...safe, anthropic_api_key_set: !!anthropic_api_key });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -907,6 +1007,31 @@ app.get('/api/queue/status', (req, res) => {
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 7.5. Per-DID pacing state: how much each number has sent today, what its
+// current allowance is, whether it is warming up or paused on a failure spike.
+// This is the view that tells you why a queue is draining slowly.
+app.get('/api/pacing/status', (req, res) => {
+  try {
+    res.json(queueWorker.pacingStatus());
+  } catch (err) {
+    fail(res, 500, 'Could not read pacing status', err);
+  }
+});
+
+// 7.6. Clear a failure-spike pause on one number.
+app.post('/api/pacing/resume', (req, res) => {
+  const { did } = req.body || {};
+  if (!did) return res.status(400).json({ error: 'did is required' });
+  try {
+    const resumed = queueWorker.resumeDid(did);
+    if (!resumed) return res.status(404).json({ error: 'No pacing state for that number' });
+    console.log(`[pacing] DID ${did} manually resumed by ${req.user && req.user.username}`);
+    res.json({ success: true, did });
+  } catch (err) {
+    fail(res, 500, 'Could not resume number', err);
   }
 });
 

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sms-gateway",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "cwd": "backend",
+      "port": 3000
+    }
+  ]
+}

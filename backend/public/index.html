@@ -522,6 +522,7 @@
             <div class="char-counter" id="bulk-char-counter">0 / 160 (1 segment)</div>
             <small class="form-help">Use <strong>[Name]</strong>, <strong>[City]</strong> and <strong>[Zip]</strong> to dynamically insert the lead's name, city and zip code.</small>
           </div>
+          <div class="lint-panel" id="bulk-lint" hidden></div>
         </div>
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-bulk">Send Message</button>
@@ -698,15 +699,79 @@
           <small class="form-help">Approved toll-free sender number.</small>
         </div>
         
+        <div class="settings-divider">Sending Pace</div>
+
         <div class="form-group">
-          <label for="setting-interval">Send Rate Limit Interval (ms)</label>
+          <label for="setting-interval">Minimum gap per number (ms)</label>
           <div class="range-container">
-            <input type="range" id="setting-interval" min="500" max="10000" step="500" value="2000">
-            <span class="range-val" id="setting-interval-val">2000 ms</span>
+            <input type="range" id="setting-interval" min="2000" max="60000" step="1000" value="12000">
+            <span class="range-val" id="setting-interval-val">12000 ms</span>
           </div>
-          <small class="form-help">Controls pacing. Carrier recommended: >= 2000ms.</small>
+          <small class="form-help">Applies to each sending number separately, not to the pool as a whole. Six numbers at 12s each send about 30 messages a minute in total.</small>
         </div>
-        
+
+        <div class="form-group">
+          <label for="setting-jitter">Timing jitter</label>
+          <div class="range-container">
+            <input type="range" id="setting-jitter" min="0" max="80" step="5" value="40">
+            <span class="range-val" id="setting-jitter-val">&plusmn;40%</span>
+          </div>
+          <small class="form-help">Randomises the gap. A perfectly regular cadence is itself a signal that the traffic is automated.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="setting-daily-cap">Daily cap per number</label>
+          <input type="number" id="setting-daily-cap" min="1" max="5000" value="300">
+          <small class="form-help">Once a number hits this, its remaining messages wait for tomorrow rather than moving to another number.</small>
+        </div>
+
+        <div class="form-group checkbox-row">
+          <label><input type="checkbox" id="setting-warmup" checked> Warm up new numbers</label>
+          <small class="form-help">Ramps a new number from 10 messages a day up to the full cap over about a week. A brand new number opening at full volume looks exactly like a number bought to spam from.</small>
+        </div>
+
+        <div class="form-group checkbox-row">
+          <label><input type="checkbox" id="setting-quiet" checked> Respect recipient local hours</label>
+          <small class="form-help">Holds messages outside the window below, in the recipient's own timezone (inferred from area code). TCPA allows 8am&ndash;9pm; the default is deliberately narrower to absorb inference error.</small>
+        </div>
+
+        <div class="form-group form-row">
+          <div>
+            <label for="setting-quiet-start">Earliest hour</label>
+            <input type="number" id="setting-quiet-start" min="0" max="23" value="9">
+          </div>
+          <div>
+            <label for="setting-quiet-end">Latest hour</label>
+            <input type="number" id="setting-quiet-end" min="1" max="24" value="20">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="setting-concurrency">Numbers sending at once</label>
+          <input type="number" id="setting-concurrency" min="1" max="20" value="3">
+          <small class="form-help">How many sends may be in flight together. Each still respects its own number's gap.</small>
+        </div>
+
+        <div class="settings-divider">Message Variation</div>
+
+        <div class="form-group checkbox-row">
+          <label><input type="checkbox" id="setting-variation"> Rewrite each message before sending</label>
+          <small class="form-help">Generates a pool of distinct rewrites per campaign so recipients do not all receive a byte-identical body. Rewrites that drop the opt-out line, change a number or link, or add claim language are discarded automatically and the original is sent instead.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="setting-anthropic-key">Anthropic API Key</label>
+          <input type="password" id="setting-anthropic-key" placeholder="Leave blank to keep the current key">
+          <small class="form-help" id="setting-anthropic-key-state">Not set.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="setting-variation-pool">Rewrites per campaign</label>
+          <input type="number" id="setting-variation-pool" min="1" max="200" value="25">
+          <small class="form-help">Recipients draw from this pool in turn. Merge fields vary on top, so 25 rewrites across thousands of contacts leaves no repeated body to fingerprint.</small>
+        </div>
+
+
         <div class="form-group">
           <label for="setting-username">Bulkvs Username</label>
           <input type="text" id="setting-username" required>
@@ -802,6 +867,7 @@
             <div class="char-counter" id="campaign-char-counter">0 / 160 (1 segment)</div>
             <small class="form-help">Use <strong>[Name]</strong>, <strong>[City]</strong> and <strong>[Zip]</strong> to dynamically insert the lead's name, city and zip code.</small>
           </div>
+          <div class="lint-panel" id="campaign-lint" hidden></div>
         </div>
 
         <button type="submit" class="btn-primary btn-block" id="btn-submit-campaign">Send Campaign</button>

@@ -3633,3 +3633,82 @@ body.notes-open #reminder-banner {
   display: none !important;
 }
 
+
+/* ==========================================================================
+   Template risk linter + pacing settings controls
+   ========================================================================== */
+
+.lint-panel {
+  margin-top: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.02);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.lint-panel[hidden] { display: none; }
+
+.lint-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.lint-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #fff;
+}
+
+.lint-badge.ok     { background: #2e9e5b; }
+.lint-badge.low    { background: #8a9199; }
+.lint-badge.medium { background: #e08a00; }
+.lint-badge.high   { background: #d13b3b; }
+
+.lint-meta { font-weight: 400; color: var(--text-muted, #6b7280); }
+
+.lint-panel ul { margin: 0; padding-left: 16px; }
+.lint-panel li { margin-bottom: 4px; }
+.lint-panel li .lint-hint { display: block; color: var(--text-muted, #6b7280); }
+
+.lint-sev {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  margin-right: 5px;
+}
+.lint-sev.high   { color: #d13b3b; }
+.lint-sev.medium { color: #e08a00; }
+.lint-sev.low    { color: #8a9199; }
+
+/* Settings: checkbox rows and side-by-side numeric pairs */
+.settings-form .checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-form .checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+.settings-form .form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.settings-form .form-row > div { flex: 1; }
