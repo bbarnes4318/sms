@@ -19,3 +19,10 @@ playwright-report/
 *.sqlite-wal
 *.sqlite-shm
 app.tar.gz
+
+# Exported customer data. Contains phone numbers and message bodies -
+# never commit these.
+*.csv
+*.xlsx
+buckets.json
+build_workbook.py

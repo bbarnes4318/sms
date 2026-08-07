@@ -306,7 +306,10 @@ queueWorker.on('messageStatusChanged', (msgEvent) => {
 // 1. Get all conversations
 app.get('/api/conversations', (req, res) => {
   try {
-    const list = db.getConversations();
+    // The list view needs a fraction of each row. Sending the full record for
+    // every contact was megabytes of JSON parsed on each load for fields the
+    // sidebar never renders.
+    const list = db.getConversationsForList();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -609,9 +612,9 @@ app.post('/api/conversations/:id/messages', (req, res) => {
   }
 
   try {
-    // Find conversation
-    const conversations = db.getConversations();
-    const conv = conversations.find(c => c.id === convId);
+    // Look the conversation up directly. This used to load every conversation
+    // and scan the array, so a single send read all ~9,400 rows.
+    const conv = db.getConversationById(convId);
     if (!conv) {
       return res.status(404).json({ error: 'Conversation not found' });
     }

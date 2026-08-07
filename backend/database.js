@@ -515,19 +515,47 @@ function resolveSenderNumber(conversationId, requested) {
   return did;
 }
 
+// The sidebar shows a one-line preview. Sending whole message bodies for every
+// contact costs about 1.5 MB of the response and none of it is ever displayed.
+const PREVIEW_CHARS = 140;
+
 function getConversations() {
   return db.prepare(`
     SELECT c.*,
            (SELECT direction FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1) as last_message_direction,
            (SELECT MAX(created_at) FROM messages WHERE conversation_id = c.id AND direction = 'inbound') as last_inbound_at,
-           (SELECT body FROM messages WHERE conversation_id = c.id AND direction = 'inbound' ORDER BY created_at DESC, id DESC LIMIT 1) as last_inbound_text
+           (SELECT substr(body, 1, ${PREVIEW_CHARS}) FROM messages WHERE conversation_id = c.id AND direction = 'inbound' ORDER BY created_at DESC, id DESC LIMIT 1) as last_inbound_text
     FROM conversations c
-    ORDER BY 
+    ORDER BY
       CASE WHEN last_inbound_at IS NOT NULL THEN 0 ELSE 1 END,
       last_inbound_at DESC,
       last_message_at DESC,
       created_at DESC
   `).all();
+}
+
+/**
+ * The conversation list for the sidebar.
+ *
+ * Identical to getConversations() except the preview string is cut to what the
+ * list actually renders. An earlier version also dropped columns the list does
+ * not read, which broke the opt-out audit fields the detail pane needs - the
+ * integration suite caught it. Responses are gzipped now, so trimming columns
+ * bought very little and risked a lot; every field is kept.
+ */
+
+/** One conversation by id. */
+function getConversationById(id) {
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) || null;
+}
+
+function getConversationsForList() {
+  return getConversations().map(row => ({
+    ...row,
+    last_message_text: row.last_message_text
+      ? String(row.last_message_text).slice(0, PREVIEW_CHARS)
+      : row.last_message_text
+  }));
 }
 
 function getOrCreateConversation(phoneNumber, contactName = null, city = null, zip = null) {
@@ -1872,6 +1900,8 @@ module.exports = {
   getSettings,
   updateSettings,
   getConversations,
+  getConversationsForList,
+  getConversationById,
   getOrCreateConversation,
   getFractelDidPool,
   resolveSenderNumber,

@@ -3712,3 +3712,13 @@ body.notes-open #reminder-banner {
 }
 
 .settings-form .form-row > div { flex: 1; }
+
+/* Sentinel that pulls in the next batch of conversations as the list scrolls.
+   Only present while more rows remain. */
+.conv-list-sentinel {
+  padding: 14px 16px;
+  font-size: 11px;
+  color: var(--text-muted, #8a9199);
+  text-align: center;
+  letter-spacing: 0.3px;
+}

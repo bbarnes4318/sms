@@ -1431,12 +1431,22 @@ function getEmptyStateHtml() {
 }
 
 // 5. Render Sidebar conversations
+// Sidebar rows are built a screenful at a time; see renderConversationChunks.
+const CONVERSATION_CHUNK = 60;   // comfortably more than one screenful
+let conversationScrollObserver = null;
+
 function renderConversations() {
   const convListHeader = document.getElementById('conv-list-header');
 
   updateTabCounts();
   updateActiveFiltersBadge();
 
+  // Stop the previous list's lazy-load observer before its rows are discarded,
+  // so it cannot fire against a detached sentinel.
+  if (conversationScrollObserver) {
+    conversationScrollObserver.disconnect();
+    conversationScrollObserver = null;
+  }
   conversationsList.innerHTML = '';
 
   const filtered = getFilteredConversations();
@@ -1457,7 +1467,7 @@ function renderConversations() {
     return;
   }
 
-  filtered.forEach(c => {
+  const buildConversationItem = (c) => {
     const isActive = activeConversation && activeConversation.id === c.id;
     const bucket = c.isLead ? 'storm-demo' : getConversationBucket(c);
     const item = document.createElement('div');
@@ -1541,10 +1551,97 @@ function renderConversations() {
     }
 
     item.addEventListener('click', () => selectConversation(c));
-    conversationsList.appendChild(item);
-  });
+    return item;
+  };
 
+  renderConversationChunks(filtered, buildConversationItem);
   updateBulkActionBarUI(filtered);
+}
+
+/* ------------------------------------------------------------------
+ * Incremental sidebar rendering
+ *
+ * The list used to build a row for every conversation in one synchronous
+ * pass. At ~9,400 contacts that is roughly 160,000 DOM nodes and over a
+ * second of blocked main thread on every render - and renderConversations
+ * runs on every filter click and every websocket update, so the page kept
+ * re-paying that cost. The nodes then stayed resident, which made every
+ * later scroll and style recalculation slow as well.
+ *
+ * Only a screenful is visible at a time, so only a screenful is built. The
+ * rest arrive as the operator scrolls. Nothing else changes: filtering,
+ * counts and select-all all read the full `filtered` array, never the DOM.
+ * ------------------------------------------------------------------ */
+
+
+/** Nearest scrollable ancestor, so the observer watches the right box. */
+function scrollParentOf(el) {
+  let node = el && el.parentElement;
+  while (node && node !== document.body) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function renderConversationChunks(filtered, buildItem) {
+  if (conversationScrollObserver) {
+    conversationScrollObserver.disconnect();
+    conversationScrollObserver = null;
+  }
+
+  let rendered = 0;
+
+  const appendChunk = () => {
+    const slice = filtered.slice(rendered, rendered + CONVERSATION_CHUNK);
+    if (!slice.length) return false;
+
+    // One reflow for the whole chunk instead of one per row.
+    const frag = document.createDocumentFragment();
+    slice.forEach(c => frag.appendChild(buildItem(c)));
+
+    const sentinel = document.getElementById('conv-list-sentinel');
+    if (sentinel) conversationsList.insertBefore(frag, sentinel);
+    else conversationsList.appendChild(frag);
+
+    rendered += slice.length;
+    return rendered < filtered.length;
+  };
+
+  appendChunk();
+
+  if (rendered >= filtered.length) return;
+
+  // A sentinel below the last row; crossing it loads the next chunk.
+  const sentinel = document.createElement('div');
+  sentinel.id = 'conv-list-sentinel';
+  sentinel.className = 'conv-list-sentinel';
+  sentinel.textContent = `Loading more… (${rendered} of ${filtered.length})`;
+  conversationsList.appendChild(sentinel);
+
+  const advance = () => {
+    const more = appendChunk();
+    if (more) {
+      sentinel.textContent = `Loading more… (${rendered} of ${filtered.length})`;
+    } else {
+      if (conversationScrollObserver) conversationScrollObserver.disconnect();
+      conversationScrollObserver = null;
+      sentinel.remove();
+    }
+  };
+
+  if (typeof IntersectionObserver === 'function') {
+    conversationScrollObserver = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) advance();
+    }, { root: scrollParentOf(conversationsList) || null, rootMargin: '400px' });
+    conversationScrollObserver.observe(sentinel);
+  } else {
+    // No observer available: fall back to rendering everything rather than
+    // silently hiding conversations the operator cannot reach.
+    while (appendChunk()) { /* keep going */ }
+    sentinel.remove();
+  }
 }
 
 function filterConversations() {
